@@ -30,13 +30,13 @@
         }
 
         .container {
-            max-width: 680px;
+            max-width: 960px;
             width: 100%;
         }
 
         .card {
             background: #ffffff;
-            padding: 3rem;
+            padding: 2.5rem;
             border-radius: 12px;
             border: 1px solid #e8e8e8;
             box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
@@ -44,31 +44,39 @@
         }
 
         .logo {
-            height: 160px;
-            margin-bottom: 0.5rem;
+            height: 120px;
+            margin-bottom: 0.25rem;
         }
 
         h1 {
-            font-size: 2rem;
+            font-size: 1.8rem;
             color: #121212;
-            margin-bottom: 0.5rem;
+            margin-bottom: 0.25rem;
             font-weight: 700;
         }
 
         .subtitle {
             color: rgba(18, 18, 18, 0.6);
-            margin-bottom: 2rem;
+            margin-bottom: 1.5rem;
+            font-size: 0.95rem;
+        }
+
+        .top-row {
+            display: flex;
+            gap: 1rem;
+            align-items: stretch;
+            margin-bottom: 1.5rem;
         }
 
         .version-select {
             display: flex;
             gap: 1rem;
-            margin-bottom: 1.5rem;
+            flex: 1;
         }
 
         .version-btn {
             flex: 1;
-            padding: 1rem;
+            padding: 0.8rem;
             border-radius: 8px;
             border: 2px solid #e8e8e8;
             background: #ffffff;
@@ -76,7 +84,7 @@
             cursor: pointer;
             transition: all 0.3s ease;
             font-family: inherit;
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .version-btn:hover {
@@ -91,14 +99,14 @@
         }
 
         .version-btn .version-title {
-            font-size: 1.1rem;
+            font-size: 1rem;
             font-weight: 700;
             display: block;
-            margin-bottom: 0.25rem;
+            margin-bottom: 0.15rem;
         }
 
         .version-btn .version-spec {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: rgba(18, 18, 18, 0.4);
         }
 
@@ -107,21 +115,23 @@
         }
 
         .firmware-select-wrapper {
-            margin-bottom: 2rem;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            min-width: 200px;
         }
 
         .firmware-select-label {
-            font-size: 0.85rem;
+            font-size: 0.8rem;
             color: rgba(18, 18, 18, 0.5);
-            margin-bottom: 0.5rem;
+            margin-bottom: 0.4rem;
         }
 
         .firmware-select {
             width: 100%;
-            max-width: 340px;
-            padding: 12px 16px;
+            padding: 10px 14px;
             font-family: inherit;
-            font-size: 0.95rem;
+            font-size: 0.9rem;
             font-weight: 600;
             color: #121212;
             background: #ffffff;
@@ -132,32 +142,20 @@
             -webkit-appearance: none;
             background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23121212' stroke-width='2' fill='none'/%3E%3C/svg%3E");
             background-repeat: no-repeat;
-            background-position: right 16px center;
+            background-position: right 14px center;
             transition: border-color 0.3s ease;
         }
 
-        .firmware-select:hover {
-            border-color: #bababa;
-        }
+        .firmware-select:hover { border-color: #bababa; }
+        .firmware-select:focus { outline: none; border-color: #121212; }
 
-        .firmware-select:focus {
-            outline: none;
-            border-color: #121212;
-        }
-
-        .flash-section {
-            margin: 2rem 0;
-        }
-
-        .flash-section.hidden {
-            display: none;
-        }
+        .flash-section { margin: 1.5rem 0; }
 
         esp-web-install-button button {
             background: #2ea44f;
             color: #ffffff;
-            padding: 18px 48px;
-            font-size: 1.2rem;
+            padding: 16px 48px;
+            font-size: 1.15rem;
             font-weight: 700;
             border: none;
             border-radius: 8px;
@@ -174,31 +172,37 @@
             box-shadow: 0 5px 20px rgba(46, 164, 79, 0.45);
         }
 
+        .bottom-row {
+            display: flex;
+            gap: 1.5rem;
+            margin-top: 1.5rem;
+            text-align: left;
+        }
+
         .info {
+            flex: 1;
             background: #f9f9f9;
-            padding: 1.5rem;
+            padding: 1.2rem;
             border-radius: 8px;
             border: 1px solid #e8e8e8;
-            margin-top: 2rem;
-            text-align: left;
         }
 
         .info h3 {
             color: #121212;
-            font-size: 0.9rem;
-            margin-bottom: 0.75rem;
+            font-size: 0.85rem;
+            margin-bottom: 0.5rem;
             font-weight: 600;
         }
 
         .info ul {
             list-style: none;
             color: rgba(18, 18, 18, 0.65);
-            font-size: 0.85rem;
+            font-size: 0.8rem;
         }
 
         .info li {
-            margin-bottom: 0.5rem;
-            padding-left: 1.2rem;
+            margin-bottom: 0.35rem;
+            padding-left: 1rem;
             position: relative;
         }
 
@@ -210,12 +214,27 @@
             font-weight: 700;
         }
 
-        .warning {
+        .warning-box {
+            flex: 1;
+            background: #fffbf0;
+            padding: 1.2rem;
+            border-radius: 8px;
+            border: 1px solid #f0e0b8;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+
+        .warning-box h3 {
             color: #b8860b;
+            font-size: 0.85rem;
+            margin-bottom: 0.5rem;
+            font-weight: 600;
+        }
+
+        .warning-box p {
+            color: #8a6508;
             font-size: 0.8rem;
-            margin-top: 1.5rem;
-            padding-top: 1rem;
-            border-top: 1px solid #e8e8e8;
         }
 
         .unsupported {
@@ -223,9 +242,7 @@
             font-size: 0.9rem;
         }
 
-        .unsupported p {
-            margin-bottom: 1rem;
-        }
+        .unsupported p { margin-bottom: 1rem; }
 
         .browser-links {
             display: flex;
@@ -239,11 +256,12 @@
             gap: 0.5rem;
             background: #ffffff;
             color: #121212;
-            padding: 10px 20px;
+            padding: 8px 16px;
             border-radius: 8px;
             border: 1.5px solid #121212;
             text-decoration: none;
             font-weight: 600;
+            font-size: 0.9rem;
             transition: all 0.3s ease;
         }
 
@@ -252,51 +270,21 @@
             color: #ffffff;
         }
 
-        .source-link {
-            display: inline-block;
-            margin-top: 2rem;
-            color: #121212;
-            text-decoration: none;
-            font-size: 0.95rem;
-            padding: 10px 20px;
-            border-radius: 8px;
-            border: 1px solid #e8e8e8;
-            background: #ffffff;
-            transition: all 0.3s ease;
-        }
-
-        .source-link:hover {
-            background: #f5f5f5;
-            border-color: #121212;
-        }
-
         .credits {
-            margin-top: 1.5rem;
+            margin-top: 1.2rem;
             color: rgba(18, 18, 18, 0.4);
-            font-size: 0.75rem;
+            font-size: 0.7rem;
         }
 
-        .credits a {
-            color: rgba(18, 18, 18, 0.5);
-            text-decoration: none;
-        }
+        .credits a { color: rgba(18, 18, 18, 0.5); text-decoration: none; }
+        .credits a:hover { color: #121212; }
 
-        .credits a:hover {
-            color: #121212;
-        }
-
-        @media (max-width: 600px) {
-            .card {
-                padding: 2rem;
-            }
-
-            h1 {
-                font-size: 1.5rem;
-            }
-
-            .version-select {
-                flex-direction: column;
-            }
+        @media (max-width: 700px) {
+            .top-row { flex-direction: column; }
+            .bottom-row { flex-direction: column; }
+            .version-select { flex-direction: column; }
+            .card { padding: 1.5rem; }
+            h1 { font-size: 1.4rem; }
         }
     </style>
 </head>
@@ -307,32 +295,37 @@
             <h1>BlockBoy Flasher</h1>
             <p class="subtitle">Flash the latest firmware to your BlockBoy</p>
 
-            <div class="version-select" id="version-buttons"></div>
-
-            <div class="firmware-select-wrapper">
-                <p class="firmware-select-label">Firmware version:</p>
-                <select class="firmware-select" id="firmware-dropdown"></select>
+            <div class="top-row">
+                <div class="version-select" id="version-buttons"></div>
+                <div class="firmware-select-wrapper">
+                    <p class="firmware-select-label">Firmware version:</p>
+                    <select class="firmware-select" id="firmware-dropdown"></select>
+                </div>
             </div>
 
             <div id="flash-container"></div>
 
-            <div class="info">
-                <h3>Instructions</h3>
-                <ul>
-                    <li>Select your BlockBoy version above</li>
-                    <li>Choose the firmware version from the dropdown</li>
-                    <li>Connect your BlockBoy using a USB-A to USB-C cable (USB-C to USB-C is not supported)</li>
-                    <li>Click "Flash Firmware"</li>
-                    <li>Select the correct COM port</li>
-                    <li>Wait for the flash to complete (~1-2 min)</li>
-                </ul>
-                <p class="warning">Note: The firmware will be overwritten. ROMs and saves on the microSD card are not affected.</p>
+            <div class="bottom-row">
+                <div class="info">
+                    <h3>Instructions</h3>
+                    <ul>
+                        <li>Select your BlockBoy version above</li>
+                        <li>Choose the firmware version</li>
+                        <li>Connect using a USB-A to USB-C cable</li>
+                        <li>Click the green Flash button</li>
+                        <li>Select the correct COM port</li>
+                        <li>Wait ~1-2 minutes</li>
+                    </ul>
+                </div>
+                <div class="warning-box">
+                    <h3>Important</h3>
+                    <p>The firmware will be overwritten. ROMs and saves on the microSD card are not affected.</p>
+                    <p style="margin-top:0.5rem;">USB-C to USB-C cables are not supported. Use a USB-A to USB-C cable.</p>
+                </div>
             </div>
 
-            <a href="https://github.com/OviTech-BlockBoy/BlockBoy" class="source-link" target="_blank">&larr; Source code on GitHub</a>
-
             <div class="credits">
-                <p>BlockBoy by <a href="https://0v1tech.com" target="_blank">OviTech</a> &bull; Based on <a href="https://github.com/ducalex/retro-go" target="_blank">Retro-Go</a> by ducalex</p>
+                <p>BlockBoy by <a href="https://0v1tech.com" target="_blank">OviTech</a> &bull; Based on <a href="https://github.com/ducalex/retro-go" target="_blank">Retro-Go</a> by ducalex &bull; <a href="https://github.com/OviTech-BlockBoy/BlockBoy" target="_blank">Source code</a></p>
             </div>
         </div>
     </div>
@@ -346,23 +339,13 @@
         //   2. Create a new manifest .json file (copy an existing one, update version and path)
         //   3. Add a new entry to the correct device below (newest first!)
         //
-        // To add a completely new device (e.g. V3):
-        //   1. Add a new object to the 'devices' list
-        //   2. Add firmware entries to its 'firmware' array
-        //
         var devices = [
             {
                 id: "v1",
                 title: "V1 - N4R2",
                 spec: "4MB Flash / 2MB RAM \u2022 GB \u2022 GBC",
                 firmware: [
-                    // Newest first!
                     { version: "1.0.1", manifest: "./manifest-v1.json", label: "v1.0.1 (latest)" }
-                    //
-                    // Example: when you release v1.1.0, add it above v1.0.1:
-                    // { version: "1.1.0", manifest: "./manifest-v1-1.1.0.json", label: "v1.1.0 (latest)" }
-                    // Then change v1.0.1 label to just "v1.0.1"
-                    //
                 ]
             },
             {
@@ -370,7 +353,6 @@
                 title: "V2 - N16R8",
                 spec: "16MB Flash / 8MB RAM \u2022 Multi-system",
                 firmware: [
-                    // Newest first!
                     { version: "2.0.1", manifest: "./manifest-v2.json", label: "v2.0.1 (latest)" }
                 ]
             }
@@ -383,17 +365,14 @@
 
         function buildUI() {
             var btnContainer = document.getElementById('version-buttons');
-
             devices.forEach(function(device, index) {
                 var btn = document.createElement('button');
                 btn.className = 'version-btn' + (index === 0 ? ' active' : '');
                 btn.setAttribute('data-id', device.id);
-                btn.innerHTML = '<span class="version-title">' + device.title + '</span>' +
-                    '<span class="version-spec">' + device.spec + '</span>';
+                btn.innerHTML = '<span class="version-title">' + device.title + '</span><span class="version-spec">' + device.spec + '</span>';
                 btn.addEventListener('click', function() { selectDevice(device.id); });
                 btnContainer.appendChild(btn);
             });
-
             populateDropdown(devices[0]);
             renderFlashButton();
         }
@@ -401,14 +380,12 @@
         function populateDropdown(device) {
             var dropdown = document.getElementById('firmware-dropdown');
             dropdown.innerHTML = '';
-
             device.firmware.forEach(function(fw, index) {
                 var option = document.createElement('option');
                 option.value = index;
                 option.textContent = fw.label;
                 dropdown.appendChild(option);
             });
-
             dropdown.selectedIndex = 0;
             activeManifest = device.firmware[0].manifest;
             activeVersion = device.firmware[0].version;
@@ -434,11 +411,9 @@
 
         function selectDevice(id) {
             activeDevice = id;
-
             document.querySelectorAll('.version-btn').forEach(function(btn) {
                 btn.classList.toggle('active', btn.getAttribute('data-id') === id);
             });
-
             var device = devices.find(function(d) { return d.id === id; });
             populateDropdown(device);
             renderFlashButton();
