@@ -1,0 +1,18 @@
+__pycache__/
+.DS_Store/
+.cache/
+.claude/
+.vscode/
+build/
+
+# ESP32 build
+/partitions.bin
+/partitions.csv
+/sdkconfig.old
+/sdkconfig
+/*/sdkconfig.old
+/*/sdkconfig
+/*.fw
+/*.img
+/*.zip
+

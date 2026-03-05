@@ -1,0 +1,9 @@
+## IDF Component Manager Configuration
+## See: https://docs.espressif.com/projects/idf-component-manager/en/latest/
+
+dependencies:
+  # ESP TinyUSB component for USB Mass Storage Device support
+  espressif/esp_tinyusb:
+    version: "^1.0.0"
+    rules:
+      - if: "idf_version >=5.0"
