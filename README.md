@@ -22,7 +22,6 @@ Custom additions on top of [Retro-Go](https://github.com/ducalex/retro-go):
 - USB Mass Storage mode (access SD card via USB-C)
 - Boot animation options (blocks, scroll, off)
 - Showcase / demo mode
-- External I2S DAC audio
 - Battery monitoring
 
 ## Building
