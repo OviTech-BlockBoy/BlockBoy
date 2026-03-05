@@ -1,0 +1,16 @@
+{
+  "name": "BlockBoy V2 (N16R8)",
+  "version": "2.0.1",
+  "new_install_prompt_erase": true,
+  "builds": [
+    {
+      "chipFamily": "ESP32-S3",
+      "parts": [
+        {
+          "path": "blockboy_v2.0.1_0v1tech-blockboy-n16r8.img",
+          "offset": 0
+        }
+      ]
+    }
+  ]
+}

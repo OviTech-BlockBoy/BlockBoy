@@ -1,0 +1,16 @@
+{
+  "name": "BlockBoy V1 (N4R2)",
+  "version": "1.0.1",
+  "new_install_prompt_erase": true,
+  "builds": [
+    {
+      "chipFamily": "ESP32-S3",
+      "parts": [
+        {
+          "path": "blockboy_v1.0.1_0v1tech-blockboy-n4r2.img",
+          "offset": 0
+        }
+      ]
+    }
+  ]
+}

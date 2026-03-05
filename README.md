@@ -16,16 +16,14 @@ A custom retro gaming handheld based on [Retro-Go](https://github.com/ducalex/re
 - **Emulators:** NES, Game Boy, Game Boy Color, Game & Watch, Sega Master System, Game Gear, Mega Drive/Genesis, ColecoVision, DOOM
 - **Build target:** `0v1Tech-BlockBoy-N16R8`
 
-## Features
-- Save states with multiple slots
-- Game cover art and thumbnails
-- SD card storage for ROMs
+## BlockBoy Features
+Custom additions on top of [Retro-Go](https://github.com/ducalex/retro-go):
+- Custom ESP32-S3 hardware target with ILI9341 display
 - USB Mass Storage mode (access SD card via USB-C)
-- WiFi file manager (web UI)
+- Boot animation options (blocks, scroll, off)
+- Showcase / demo mode
 - External I2S DAC audio
 - Battery monitoring
-- Customizable themes
-- Boot animation options
 
 ## Building
 
@@ -43,12 +41,14 @@ See [V1 Build Guide](V1-BlockBoy-N4R2/BUILDING.md) and [V2 Build Guide](V2-Block
 
 ## Flashing
 
+Replace `COMx` with your actual serial port (check Device Manager → Ports).
+
 ```bash
 # V1
-python rg_tool.py --target 0v1Tech-BlockBoy-N4R2 --port COM3 install
+python rg_tool.py --target 0v1Tech-BlockBoy-N4R2 --port COMx install
 
 # V2
-python rg_tool.py --target 0v1Tech-BlockBoy-N16R8 --port COM3 install
+python rg_tool.py --target 0v1Tech-BlockBoy-N16R8 --port COMx install
 ```
 
 ## Credits
