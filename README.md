@@ -1,4 +1,4 @@
-# BlockBoy by 0v1Tech
+# BlockBoy by OviTech
 
 A custom retro gaming handheld based on [Retro-Go](https://github.com/ducalex/retro-go) by ducalex, running on the ESP32-S3.
 
@@ -53,7 +53,7 @@ python rg_tool.py --target 0v1Tech-BlockBoy-N16R8 --port COMx install
 
 ## Credits
 - [Retro-Go](https://github.com/ducalex/retro-go) by ducalex
-- BlockBoy hardware and firmware by [0v1Tech](https://0v1tech.com)
+- BlockBoy hardware and firmware by [OviTech](https://0v1tech.com)
 
 ## License
 This project is licensed under the GNU General Public License v2.0 - see the [COPYING](COPYING) file in each version folder for details.
