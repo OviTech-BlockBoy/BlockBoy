@@ -237,6 +237,40 @@
             font-size: 0.8rem;
         }
 
+        .custom-flash {
+            margin-top: 1.5rem;
+            padding-top: 1.5rem;
+            border-top: 1px solid #e8e8e8;
+        }
+
+        .custom-flash-label {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            background: #ffffff;
+            color: #121212;
+            padding: 10px 20px;
+            border-radius: 8px;
+            border: 2px solid #e8e8e8;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 0.9rem;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+
+        .custom-flash-label:hover {
+            border-color: #121212;
+        }
+
+        .custom-flash-label input[type="file"] {
+            display: none;
+        }
+
+        #custom-flash-container {
+            margin-top: 1rem;
+        }
+
         .unsupported {
             color: rgba(18, 18, 18, 0.6);
             font-size: 0.9rem;
@@ -322,6 +356,14 @@
                     <p>The firmware will be overwritten. ROMs and saves on the microSD card are not affected.</p>
                     <p style="margin-top:0.5rem;">USB-C to USB-C cables are not supported. Use a USB-A to USB-C cable.</p>
                 </div>
+            </div>
+
+            <div class="custom-flash">
+                <label class="custom-flash-label">
+                    Custom File
+                    <input type="file" id="custom-img-input" accept=".img">
+                </label>
+                <div id="custom-flash-container"></div>
             </div>
 
             <div class="credits">
@@ -428,6 +470,47 @@
         });
 
         buildUI();
+
+        // Custom Flash: upload own .img
+        document.getElementById('custom-img-input').addEventListener('change', function() {
+            var file = this.files[0];
+            var container = document.getElementById('custom-flash-container');
+
+            if (!file) {
+                container.innerHTML = '';
+                return;
+            }
+
+            var imgBlob = URL.createObjectURL(file);
+
+            var manifest = {
+                name: 'Custom Firmware (' + file.name + ')',
+                version: 'custom',
+                new_install_prompt_erase: true,
+                builds: [{
+                    chipFamily: 'ESP32-S3',
+                    parts: [{ path: imgBlob, offset: 0 }]
+                }]
+            };
+
+            var manifestBlob = URL.createObjectURL(
+                new Blob([JSON.stringify(manifest)], { type: 'application/json' })
+            );
+
+            container.innerHTML =
+                '<div class="flash-section">' +
+                    '<esp-web-install-button manifest="' + manifestBlob + '">' +
+                        '<button slot="activate">\u25B6\u25B6 Custom Flash (' + file.name + ') \u25C0\u25C0</button>' +
+                        '<div slot="unsupported" class="unsupported">' +
+                            '<p>Your browser does not support this. Please use:</p>' +
+                            '<div class="browser-links">' +
+                                '<a href="https://www.google.com/chrome/" target="_blank">Chrome</a>' +
+                                '<a href="https://www.microsoft.com/edge" target="_blank">Edge</a>' +
+                            '</div>' +
+                        '</div>' +
+                    '</esp-web-install-button>' +
+                '</div>';
+        });
     </script>
 </body>
 </html>
