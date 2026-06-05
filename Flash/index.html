@@ -4,322 +4,124 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>BlockBoy Flasher - OviTech</title>
-    <meta name="description" content="Flash your BlockBoy with the latest firmware from your browser.">
+    <meta name="description" content="Flash your BlockBoy with the correct firmware from your browser. The flasher auto-detects your device so you can never flash the wrong version.">
     <link rel="icon" type="image/png" href="https://0v1tech.nl/favicon.png">
-    <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;600;700&display=swap" rel="stylesheet">
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             font-family: 'Assistant', 'Segoe UI', Arial, sans-serif;
-            line-height: 1.6;
-            color: #121212;
-            background: #ffffff;
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            padding: 20px;
+            line-height: 1.6; color: #121212; background: #ffffff;
+            min-height: 100vh; display: flex; flex-direction: column;
+            align-items: center; justify-content: center; padding: 20px;
         }
-
-        .container {
-            max-width: 960px;
-            width: 100%;
-        }
-
+        .container { max-width: 760px; width: 100%; }
         .card {
-            background: #ffffff;
-            padding: 2.5rem;
-            border-radius: 12px;
-            border: 1px solid #e8e8e8;
-            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+            background: #ffffff; padding: 2.5rem; border-radius: 12px;
+            border: 1px solid #e8e8e8; box-shadow: 0 2px 12px rgba(0,0,0,0.06);
             text-align: center;
         }
+        .logo { height: 110px; margin-bottom: 0.25rem; }
+        h1 { font-size: 1.8rem; color: #121212; margin-bottom: 0.25rem; font-weight: 700; }
+        .subtitle { color: rgba(18,18,18,0.6); margin-bottom: 1.5rem; }
 
-        .logo {
-            height: 120px;
-            margin-bottom: 0.25rem;
-        }
-
-        h1 {
-            font-size: 1.8rem;
-            color: #121212;
-            margin-bottom: 0.25rem;
-            font-weight: 700;
-        }
-
-        .subtitle {
-            color: rgba(18, 18, 18, 0.6);
-            margin-bottom: 1.5rem;
-            font-size: 0.95rem;
-        }
-
-        .top-row {
-            display: flex;
-            gap: 1rem;
-            align-items: stretch;
-            margin-bottom: 1.5rem;
-        }
-
-        .version-select {
-            display: flex;
-            gap: 1rem;
-            flex: 1;
-        }
-
-        .version-btn {
-            flex: 1;
-            padding: 0.8rem;
-            border-radius: 8px;
-            border: 2px solid #e8e8e8;
-            background: #ffffff;
-            color: rgba(18, 18, 18, 0.5);
-            cursor: pointer;
-            transition: all 0.3s ease;
-            font-family: inherit;
-            font-size: 0.9rem;
-        }
-
-        .version-btn:hover {
-            border-color: #bababa;
-            color: #121212;
-        }
-
-        .version-btn.active {
-            border-color: #121212;
-            background: #ffffff;
-            color: #121212;
-        }
-
-        .version-btn .version-title {
-            font-size: 1rem;
-            font-weight: 700;
-            display: block;
-            margin-bottom: 0.15rem;
-        }
-
-        .version-btn .version-spec {
-            font-size: 0.75rem;
-            color: rgba(18, 18, 18, 0.4);
-        }
-
-        .version-btn.active .version-spec {
-            color: rgba(18, 18, 18, 0.6);
-        }
-
-        .firmware-select-wrapper {
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            min-width: 200px;
-        }
-
-        .firmware-select-label {
-            font-size: 0.8rem;
-            color: rgba(18, 18, 18, 0.5);
-            margin-bottom: 0.4rem;
-        }
-
+        .channel { display: flex; gap: 0.5rem; align-items: center; justify-content: center; margin-bottom: 1.25rem; }
+        .channel label { font-weight: 600; font-size: 0.9rem; }
         .firmware-select {
-            width: 100%;
-            padding: 10px 14px;
-            font-family: inherit;
-            font-size: 0.9rem;
-            font-weight: 600;
-            color: #121212;
-            background: #ffffff;
-            border: 2px solid #e8e8e8;
-            border-radius: 8px;
-            cursor: pointer;
-            appearance: none;
-            -webkit-appearance: none;
-            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23121212' stroke-width='2' fill='none'/%3E%3C/svg%3E");
-            background-repeat: no-repeat;
-            background-position: right 14px center;
-            transition: border-color 0.3s ease;
+            font-family: inherit; font-weight: 600; font-size: 0.9rem;
+            padding: 8px 14px; border: 1.5px solid #121212; border-radius: 8px;
+            background: #fff; color: #121212; cursor: pointer;
         }
 
-        .firmware-select:hover { border-color: #bababa; }
-        .firmware-select:focus { outline: none; border-color: #121212; }
-
-        .flash-section { margin: 1.5rem 0; }
-
-        esp-web-install-button button {
-            background: #2ea44f;
-            color: #ffffff;
-            padding: 16px 48px;
-            font-size: 1.15rem;
-            font-weight: 700;
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            font-family: inherit;
-            box-shadow: 0 3px 12px rgba(46, 164, 79, 0.35);
-            letter-spacing: 0.5px;
+        button.flash-btn {
+            font-family: inherit; font-weight: 700; font-size: 1rem;
+            background: #1faa59; color: #fff; border: none; border-radius: 8px;
+            padding: 14px 28px; cursor: pointer; transition: all 0.2s ease;
         }
+        button.flash-btn:hover:not(:disabled) { background: #178a48; }
+        button.flash-btn:disabled { background: #b8b8b8; cursor: not-allowed; }
 
-        esp-web-install-button button:hover {
-            background: #2c974b;
-            transform: translateY(-2px);
-            box-shadow: 0 5px 20px rgba(46, 164, 79, 0.45);
+        button.serial-btn {
+            font-family: inherit; font-weight: 600; font-size: 0.9rem;
+            background: #fff; color: #121212; border: 1.5px solid #121212;
+            border-radius: 8px; padding: 10px 20px; margin-left: 0.5rem; cursor: pointer;
+            transition: all 0.2s ease;
         }
+        button.serial-btn:hover:not(:disabled) { background: #121212; color: #fff; }
+        button.serial-btn:disabled { border-color: #c8c8c8; color: #b8b8b8; cursor: not-allowed; }
+        button.serial-btn.active { background: #b32020; color: #fff; border-color: #b32020; }
 
-        .bottom-row {
-            display: flex;
-            gap: 1.5rem;
-            margin-top: 1.5rem;
-            text-align: left;
+        .status {
+            margin: 1.25rem 0 0; padding: 0.9rem 1rem; border-radius: 8px;
+            font-weight: 600; font-size: 0.95rem; display: none;
         }
+        .status.show { display: block; }
+        .status.info { background: #eef4ff; color: #1a4fb0; border: 1px solid #cfe0ff; }
+        .status.ok   { background: #eafbef; color: #1a7d3c; border: 1px solid #c5ecd0; }
+        .status.err  { background: #fdecec; color: #b32020; border: 1px solid #f4c5c5; }
 
-        .info {
-            flex: 1;
-            background: #f9f9f9;
-            padding: 1.2rem;
-            border-radius: 8px;
-            border: 1px solid #e8e8e8;
+        .confirm-panel { display: none; margin-top: 1.25rem; padding: 1.2rem; border: 1.5px solid #121212; border-radius: 10px; background: #fafafa; }
+        .confirm-panel.show { display: block; }
+        .confirm-text { font-weight: 600; font-size: 1rem; margin-bottom: 0.9rem; }
+        .confirm-actions { display: flex; gap: 0.6rem; justify-content: center; }
+        .confirm-actions .serial-btn { margin-left: 0; }
+
+        .tools { margin-top: 1.5rem; text-align: left; border-top: 1px solid #eee; padding-top: 0.75rem; }
+        .tools summary { cursor: pointer; color: rgba(18,18,18,0.45); font-size: 0.8rem; font-weight: 600; list-style: none; user-select: none; }
+        .tools summary::-webkit-details-marker { display: none; }
+        .tools summary::before { content: '\25B8  '; }
+        .tools[open] summary::before { content: '\25BE  '; }
+        .tools-body { margin-top: 0.75rem; }
+        .tools-body p { color: rgba(18,18,18,0.55); font-size: 0.8rem; margin-bottom: 0.6rem; }
+        .tools-buttons { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+        .tools-buttons .serial-btn { margin-left: 0; }
+        .custom-row { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; margin-top: 0.6rem; }
+        .custom-row .serial-btn { margin-left: 0; }
+        .custom-row input[type=file] { font-size: 0.8rem; color: rgba(18,18,18,0.7); }
+
+        .progress-wrap { margin-top: 1rem; height: 10px; background: #eee; border-radius: 6px; overflow: hidden; display: none; }
+        .progress-wrap.show { display: block; }
+        .progress-bar { height: 100%; width: 0%; background: #1faa59; transition: width 0.2s ease; }
+
+        .log {
+            margin-top: 1rem; text-align: left; background: #0f1115; color: #c9d1d9;
+            font-family: 'Consolas','Courier New',monospace; font-size: 0.78rem;
+            padding: 0.8rem; border-radius: 8px; height: 160px; overflow-y: auto;
+            white-space: pre-wrap; word-break: break-word; display: none;
         }
+        .log.show { display: block; }
 
-        .info h3 {
-            color: #121212;
-            font-size: 0.85rem;
-            margin-bottom: 0.5rem;
-            font-weight: 600;
+        .serial-input-row { display: none; gap: 0.5rem; margin-top: 0.5rem; }
+        .serial-input-row.show { display: flex; }
+        .serial-input {
+            flex: 1; font-family: 'Consolas','Courier New',monospace; font-size: 0.85rem;
+            padding: 8px 12px; border: 1.5px solid #ccc; border-radius: 8px; color: #121212;
         }
+        .serial-input:focus { outline: none; border-color: #121212; }
+        .serial-input-row .serial-btn { margin-left: 0; }
 
-        .info ul {
-            list-style: none;
-            color: rgba(18, 18, 18, 0.65);
-            font-size: 0.8rem;
-        }
+        .info-grid { display: flex; gap: 1rem; margin-top: 1.5rem; text-align: left; }
+        .info-box, .warning-box { flex: 1; padding: 1.1rem; border-radius: 8px; font-size: 0.82rem; }
+        .info-box { background: #f7f8fa; border: 1px solid #eaecef; }
+        .warning-box { background: #fffbf0; border: 1px solid #f0e0b8; }
+        .info-box h3 { font-size: 0.85rem; margin-bottom: 0.5rem; }
+        .warning-box h3 { color: #b8860b; font-size: 0.85rem; margin-bottom: 0.5rem; }
+        .warning-box p { color: #8a6508; }
+        .info-box ul { list-style: none; }
+        .info-box li { margin-bottom: 0.3rem; padding-left: 1rem; position: relative; }
+        .info-box li::before { content: '>'; position: absolute; left: 0; font-weight: 700; }
 
-        .info li {
-            margin-bottom: 0.35rem;
-            padding-left: 1rem;
-            position: relative;
-        }
-
-        .info li::before {
-            content: '>';
-            position: absolute;
-            left: 0;
-            color: #121212;
-            font-weight: 700;
-        }
-
-        .warning-box {
-            flex: 1;
-            background: #fffbf0;
-            padding: 1.2rem;
-            border-radius: 8px;
-            border: 1px solid #f0e0b8;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-        }
-
-        .warning-box h3 {
-            color: #b8860b;
-            font-size: 0.85rem;
-            margin-bottom: 0.5rem;
-            font-weight: 600;
-        }
-
-        .warning-box p {
-            color: #8a6508;
-            font-size: 0.8rem;
-        }
-
-        .custom-flash {
-            margin-top: 1.5rem;
-            padding-top: 1.5rem;
-            border-top: 1px solid #e8e8e8;
-        }
-
-        .custom-flash-label {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.4rem;
-            background: #ffffff;
-            color: #121212;
-            padding: 10px 20px;
-            border-radius: 8px;
-            border: 2px solid #e8e8e8;
-            cursor: pointer;
-            font-family: inherit;
-            font-size: 0.9rem;
-            font-weight: 600;
-            transition: all 0.3s ease;
-        }
-
-        .custom-flash-label:hover {
-            border-color: #121212;
-        }
-
-        .custom-flash-label input[type="file"] {
-            display: none;
-        }
-
-        #custom-flash-container {
-            margin-top: 1rem;
-        }
-
-        .unsupported {
-            color: rgba(18, 18, 18, 0.6);
-            font-size: 0.9rem;
-        }
-
-        .unsupported p { margin-bottom: 1rem; }
-
-        .browser-links {
-            display: flex;
-            gap: 1rem;
-            justify-content: center;
-        }
-
+        .unsupported { color: #b32020; font-weight: 600; margin-top: 1rem; }
+        .browser-links { display: flex; gap: 1rem; justify-content: center; margin-top: 0.75rem; }
         .browser-links a {
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-            background: #ffffff;
-            color: #121212;
-            padding: 8px 16px;
-            border-radius: 8px;
-            border: 1.5px solid #121212;
-            text-decoration: none;
-            font-weight: 600;
-            font-size: 0.9rem;
-            transition: all 0.3s ease;
+            display: flex; align-items: center; gap: 0.5rem; background: #fff; color: #121212;
+            padding: 8px 16px; border-radius: 8px; border: 1.5px solid #121212;
+            text-decoration: none; font-weight: 600; font-size: 0.9rem;
         }
-
-        .browser-links a:hover {
-            background: #121212;
-            color: #ffffff;
-        }
-
-        .credits {
-            margin-top: 1.2rem;
-            color: rgba(18, 18, 18, 0.4);
-            font-size: 0.7rem;
-        }
-
+        .credits { margin-top: 1.2rem; color: rgba(18,18,18,0.4); font-size: 0.7rem; }
         .credits a { color: #1a73e8; text-decoration: none; }
-        .credits a:hover { color: #1558b0; }
-
-        @media (max-width: 700px) {
-            .top-row { flex-direction: column; }
-            .bottom-row { flex-direction: column; }
-            .version-select { flex-direction: column; }
-            .card { padding: 1.5rem; }
-            h1 { font-size: 1.4rem; }
-        }
+        @media (max-width: 700px) { .info-grid { flex-direction: column; } .card { padding: 1.5rem; } }
     </style>
 </head>
 <body>
@@ -327,43 +129,74 @@
         <div class="card">
             <img src="https://ovitech-2.myshopify.com/cdn/shop/files/2_-_kopie_2.png?v=1771716578&width=600" alt="OviTech" class="logo">
             <h1>BlockBoy Flasher</h1>
-            <p class="subtitle">Flash the latest firmware to your BlockBoy</p>
+            <p class="subtitle">The flasher detects your device automatically, so you can't flash the wrong version.</p>
 
-            <div class="top-row">
-                <div class="version-select" id="version-buttons"></div>
-                <div class="firmware-select-wrapper">
-                    <p class="firmware-select-label">Firmware version:</p>
-                    <select class="firmware-select" id="firmware-dropdown"></select>
+            <div id="app">
+                <div class="channel">
+                    <label for="firmwareSelect">Firmware:</label>
+                    <select id="firmwareSelect" class="firmware-select"></select>
+                </div>
+
+                <button class="flash-btn" id="connectBtn">&#9656;&#9656; Connect device &#9666;&#9666;</button>
+
+                <div class="confirm-panel" id="confirmPanel">
+                    <p class="confirm-text" id="confirmText"></p>
+                    <div class="confirm-actions">
+                        <button class="flash-btn" id="confirmBtn">Flash now</button>
+                        <button class="serial-btn" id="cancelBtn">Cancel</button>
+                    </div>
+                </div>
+
+                <div class="status" id="status"></div>
+                <div class="progress-wrap" id="progressWrap"><div class="progress-bar" id="progressBar"></div></div>
+                <pre class="log" id="log"></pre>
+                <div class="serial-input-row" id="serialInputRow">
+                    <input type="text" id="serialInput" class="serial-input" placeholder="Type a command and press Enter..." autocomplete="off" spellcheck="false">
+                    <button class="serial-btn" id="serialSendBtn">Send</button>
+                </div>
+
+                <div class="info-grid">
+                    <div class="info-box">
+                        <h3>Instructions</h3>
+                        <ul>
+                            <li>Connect with a USB-A to USB-C cable</li>
+                            <li>Click "Connect device" and pick the port in the popup</li>
+                            <li>Your device is detected automatically</li>
+                            <li>Confirm, then wait ~1-2 minutes</li>
+                        </ul>
+                    </div>
+                    <div class="warning-box">
+                        <h3>Important</h3>
+                        <p>The firmware is overwritten. ROMs and saves on the microSD card are not affected.</p>
+                        <p style="margin-top:0.5rem;">USB-C to USB-C cables are not supported. Use a USB-A to USB-C cable.</p>
+                    </div>
                 </div>
             </div>
 
-            <div id="flash-container"></div>
+            <details class="tools">
+                <summary>Tools</summary>
+                <div class="tools-body">
+                    <p>Only needed for testing or troubleshooting. A normal install does not need this.</p>
+                    <div class="tools-buttons">
+                        <button class="serial-btn" id="recoveryBtn">Recovery: detect &amp; flash now</button>
+                        <button class="serial-btn" id="serialBtn">Open serial monitor</button>
+                    </div>
+                    <p style="margin-top:0.6rem;">Recovery skips the confirm step and re-flashes a stuck or restarting device the moment it is caught &mdash; no need to be quick. It uses the firmware selected above and still verifies the hardware first.</p>
 
-            <div class="bottom-row">
-                <div class="info">
-                    <h3>Instructions</h3>
-                    <ul>
-                        <li>Select your BlockBoy version above</li>
-                        <li>Choose the firmware version</li>
-                        <li>Connect using a USB-A to USB-C cable</li>
-                        <li>Click the green Flash button</li>
-                        <li>Select the correct COM port</li>
-                        <li>Wait ~1-2 minutes</li>
-                    </ul>
+                    <div class="custom-row">
+                        <input type="file" id="customFile" accept=".img,.bin">
+                        <button class="serial-btn" id="customBtn">Flash custom firmware</button>
+                    </div>
+                    <p style="margin-top:0.6rem;">Flash your own .img file. The device is still detected, and a file larger than the chip is refused so it can't brick the device.</p>
                 </div>
-                <div class="warning-box">
-                    <h3>Important</h3>
-                    <p>The firmware will be overwritten. ROMs and saves on the microSD card are not affected.</p>
-                    <p style="margin-top:0.5rem;">USB-C to USB-C cables are not supported. Use a USB-A to USB-C cable.</p>
-                </div>
-            </div>
+            </details>
 
-            <div class="custom-flash">
-                <label class="custom-flash-label">
-                    Custom File
-                    <input type="file" id="custom-img-input" accept=".img">
-                </label>
-                <div id="custom-flash-container"></div>
+            <div class="unsupported" id="unsupported" style="display:none;">
+                <p>Your browser does not support flashing (Web Serial). Please use:</p>
+                <div class="browser-links">
+                    <a href="https://www.google.com/chrome/" target="_blank">Chrome</a>
+                    <a href="https://www.microsoft.com/edge" target="_blank">Edge</a>
+                </div>
             </div>
 
             <div class="credits">
@@ -372,144 +205,477 @@
         </div>
     </div>
 
-    <script>
-        //
-        // === FIRMWARE VERSIONS ===
-        //
-        // To add a new firmware update:
-        //   1. Place the new .img file in the Flash folder
-        //   2. Create a new manifest .json file (copy an existing one, update version and path)
-        //   3. Add a new entry to the correct device below (newest first!)
-        //
-        var devices = [
-            {
-                id: "v1",
-                title: "V1 - N4R2",
-                spec: "4MB Flash / 2MB RAM \u2022 GB \u2022 GBC",
-                firmware: [
-                    { version: "1.0.1", manifest: "./manifest-v1.json", label: "v1.0.1 (latest)" }
-                ]
+    <script type="module">
+        import { ESPLoader, Transport } from "https://cdn.jsdelivr.net/npm/esptool-js@0.5.4/+esm";
+
+        // ============================================================
+        //  FIRMWARE CONFIG
+        //  Map each BlockBoy variant to its real flash size + image(s).
+        //  flashKB MUST match the physical chip: 4096 = V1 (N4R2), 16384 = V2 (N16R8).
+        //  To publish a new firmware, drop the .img next to this page and
+        //  update the path below. Set beta to null if there is no beta yet.
+        // ============================================================
+        const FIRMWARE = {
+            4096: {
+                label: "BlockBoy V1 (N4R2)",
+                stable: "./blockboy_v1.0.1_0v1tech-blockboy-n4r2.img",
+                beta:   "./blockboy_v1_1.1-beta_n4r2.img"
             },
-            {
-                id: "v2",
-                title: "V2 - N16R8",
-                spec: "16MB Flash / 8MB RAM \u2022 Multi-system",
-                firmware: [
-                    { version: "2.0.1", manifest: "./manifest-v2.json", label: "v2.0.1 (latest)" }
-                ]
+            16384: {
+                label: "BlockBoy V2 (N16R8)",
+                stable: "./blockboy_v2.0.1_0v1tech-blockboy-n16r8.img",
+                beta:   "./blockboy_v2_1.1-beta_n16r8.img"
             }
+        };
+
+        // ============================================================
+        //  FIRMWARE CHANNELS (the dropdown options)
+        //  These are the choices shown to the user. The actual file is
+        //  resolved per detected hardware via FIRMWARE[flashKB][id].
+        //  Add more entries here to grow the dropdown.
+        // ============================================================
+        const CHANNELS = [
+            { id: "stable", label: "firmware 1.0" },
+            { id: "beta",   label: "firmware 1.1 beta" }
         ];
 
-        var activeDevice = devices[0].id;
-        var activeManifest = devices[0].firmware[0].manifest;
-        var activeVersion = devices[0].firmware[0].version;
-        var activeTitle = devices[0].title;
+        const connectBtn = document.getElementById("connectBtn");
+        const confirmPanel = document.getElementById("confirmPanel");
+        const confirmText = document.getElementById("confirmText");
+        const confirmBtn = document.getElementById("confirmBtn");
+        const cancelBtn = document.getElementById("cancelBtn");
+        const serialBtn = document.getElementById("serialBtn");
+        const statusEl = document.getElementById("status");
+        const logEl = document.getElementById("log");
+        const progWrap = document.getElementById("progressWrap");
+        const progBar = document.getElementById("progressBar");
 
-        function buildUI() {
-            var btnContainer = document.getElementById('version-buttons');
-            devices.forEach(function(device, index) {
-                var btn = document.createElement('button');
-                btn.className = 'version-btn' + (index === 0 ? ' active' : '');
-                btn.setAttribute('data-id', device.id);
-                btn.innerHTML = '<span class="version-title">' + device.title + '</span><span class="version-spec">' + device.spec + '</span>';
-                btn.addEventListener('click', function() { selectDevice(device.id); });
-                btnContainer.appendChild(btn);
-            });
-            populateDropdown(devices[0]);
-            renderFlashButton();
+        if (!("serial" in navigator)) {
+            document.getElementById("app").style.display = "none";
+            document.getElementById("unsupported").style.display = "block";
         }
 
-        function populateDropdown(device) {
-            var dropdown = document.getElementById('firmware-dropdown');
-            dropdown.innerHTML = '';
-            device.firmware.forEach(function(fw, index) {
-                var option = document.createElement('option');
-                option.value = index;
-                option.textContent = fw.label;
-                dropdown.appendChild(option);
-            });
-            dropdown.selectedIndex = 0;
-            activeManifest = device.firmware[0].manifest;
-            activeVersion = device.firmware[0].version;
-            activeTitle = device.title;
-        }
-
-        function renderFlashButton() {
-            var container = document.getElementById('flash-container');
-            container.innerHTML =
-                '<div class="flash-section">' +
-                    '<esp-web-install-button manifest="' + activeManifest + '">' +
-                        '<button slot="activate">\u25B6\u25B6 Flash ' + activeTitle + ' (v' + activeVersion + ') \u25C0\u25C0</button>' +
-                        '<div slot="unsupported" class="unsupported">' +
-                            '<p>Your browser does not support this. Please use:</p>' +
-                            '<div class="browser-links">' +
-                                '<a href="https://www.google.com/chrome/" target="_blank">Chrome</a>' +
-                                '<a href="https://www.microsoft.com/edge" target="_blank">Edge</a>' +
-                            '</div>' +
-                        '</div>' +
-                    '</esp-web-install-button>' +
-                '</div>';
-        }
-
-        function selectDevice(id) {
-            activeDevice = id;
-            document.querySelectorAll('.version-btn').forEach(function(btn) {
-                btn.classList.toggle('active', btn.getAttribute('data-id') === id);
-            });
-            var device = devices.find(function(d) { return d.id === id; });
-            populateDropdown(device);
-            renderFlashButton();
-        }
-
-        document.getElementById('firmware-dropdown').addEventListener('change', function() {
-            var device = devices.find(function(d) { return d.id === activeDevice; });
-            var fw = device.firmware[this.selectedIndex];
-            activeManifest = fw.manifest;
-            activeVersion = fw.version;
-            renderFlashButton();
+        // Populate the firmware dropdown from CHANNELS
+        const firmwareSelect = document.getElementById("firmwareSelect");
+        CHANNELS.forEach((c) => {
+            const opt = document.createElement("option");
+            opt.value = c.id;
+            opt.textContent = c.label;
+            firmwareSelect.appendChild(opt);
         });
 
-        buildUI();
+        function setStatus(msg, kind) {
+            statusEl.textContent = msg;
+            statusEl.className = "status show " + (kind || "info");
+        }
+        function logLine(msg) {
+            logEl.classList.add("show");
+            logEl.textContent += msg + "\n";
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+        // esptool-js terminal interface
+        const terminal = {
+            clean() { logEl.textContent = ""; },
+            writeLine(data) { logLine(data); },
+            write(data) { logEl.textContent += data; logEl.scrollTop = logEl.scrollHeight; }
+        };
 
-        // Custom Flash: upload own .img
-        document.getElementById('custom-img-input').addEventListener('change', function() {
-            var file = this.files[0];
-            var container = document.getElementById('custom-flash-container');
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-            if (!file) {
-                container.innerHTML = '';
-                return;
+        // Auto-retry connect. A bricked BlockBoy reboot-loops, so its USB port
+        // keeps appearing and vanishing. Instead of asking the user to "be quick",
+        // we hammer the connect: the moment the device enumerates, esptool-js'
+        // reset sequence forces ROM download mode and holds it there (loop stops).
+        async function connectWithRetry(port, maxMs) {
+            const deadline = Date.now() + maxMs;
+            let attempt = 0, lastErr;
+            while (Date.now() < deadline) {
+                attempt++;
+                const transport = new Transport(port);
+                const esploader = new ESPLoader({ transport, baudrate: 921600, terminal });
+                try {
+                    const chip = await esploader.main();
+                    return { transport, esploader, chip };
+                } catch (e) {
+                    lastErr = e;
+                    if (attempt === 1 || attempt % 5 === 0) {
+                        setStatus("Searching for the device... (attempt " + attempt + ") keep it plugged in.", "info");
+                    }
+                    try { await transport.disconnect(); } catch (_) {}
+                    await sleep(120);
+                }
             }
+            throw lastErr || new Error("Could not connect to the device in time. Unplug and replug it, then try again.");
+        }
 
-            var imgBlob = URL.createObjectURL(file);
+        // Uint8Array -> binary string (esptool-js v0.5.x expects a binary string)
+        function ui8ToBinaryString(u8) {
+            let out = "";
+            const CHUNK = 0x8000;
+            for (let i = 0; i < u8.length; i += CHUNK) {
+                out += String.fromCharCode.apply(null, u8.subarray(i, i + CHUNK));
+            }
+            return out;
+        }
 
-            var manifest = {
-                name: 'Custom Firmware (' + file.name + ')',
-                version: 'custom',
-                new_install_prompt_erase: true,
-                builds: [{
-                    chipFamily: 'ESP32-S3',
-                    parts: [{ path: imgBlob, offset: 0 }]
-                }]
-            };
+        // Holds the live connection between "Connect" (detect) and "Flash now" (write).
+        let pending = null;
 
-            var manifestBlob = URL.createObjectURL(
-                new Blob([JSON.stringify(manifest)], { type: 'application/json' })
-            );
+        function channelLabelFor(id) {
+            const c = CHANNELS.find((x) => x.id === id);
+            return c ? c.label : id;
+        }
+        function resetMainUI() {
+            connectBtn.style.display = "";
+            connectBtn.disabled = false;
+            confirmPanel.classList.remove("show");
+            firmwareSelect.disabled = false;
+            serialBtn.disabled = false;
+        }
 
-            container.innerHTML =
-                '<div class="flash-section">' +
-                    '<esp-web-install-button manifest="' + manifestBlob + '">' +
-                        '<button slot="activate">\u25B6\u25B6 Custom Flash (' + file.name + ') \u25C0\u25C0</button>' +
-                        '<div slot="unsupported" class="unsupported">' +
-                            '<p>Your browser does not support this. Please use:</p>' +
-                            '<div class="browser-links">' +
-                                '<a href="https://www.google.com/chrome/" target="_blank">Chrome</a>' +
-                                '<a href="https://www.microsoft.com/edge" target="_blank">Edge</a>' +
-                            '</div>' +
-                        '</div>' +
-                    '</esp-web-install-button>' +
-                '</div>';
+        // STEP 1 — connect & detect (no writing happens here)
+        connectBtn.addEventListener("click", async () => {
+            const channel = firmwareSelect.value;
+            connectBtn.disabled = true;
+            firmwareSelect.disabled = true;
+            serialBtn.disabled = true;
+            progWrap.classList.remove("show");
+            progBar.style.width = "0%";
+            let transport;
+
+            try {
+                setStatus("Select your BlockBoy in the popup...", "info");
+                const port = await navigator.serial.requestPort();
+
+                // Auto-retry: also recovers a reboot-looping / bricked device
+                // without the user having to time the connect window.
+                setStatus("Connecting... keep the device plugged in.", "info");
+                const conn = await connectWithRetry(port, 30000);
+                transport = conn.transport;
+                logLine("Chip: " + conn.chip);
+
+                // --- THE SAFETY GATE: detect real flash size, never flash the wrong image ---
+                const flashKB = await conn.esploader.getFlashSize();
+                logLine("Detected flash size: " + (flashKB ? flashKB + " KB" : "unknown"));
+
+                const variant = FIRMWARE[flashKB];
+                if (!variant) {
+                    setStatus("Unknown device (flash " + (flashKB || "?") + " KB). Nothing was flashed. This does not look like a BlockBoy V1 or V2.", "err");
+                    await safeDisconnect(transport);
+                    resetMainUI();
+                    return;
+                }
+
+                const imgPath = variant[channel];
+                const channelLabel = channelLabelFor(channel);
+                if (!imgPath) {
+                    setStatus("No " + channelLabel + " available for " + variant.label + " yet. Nothing was flashed.", "err");
+                    await safeDisconnect(transport);
+                    resetMainUI();
+                    return;
+                }
+
+                // Hold the connection open and ask for confirmation before writing.
+                pending = { transport, esploader: conn.esploader, variant, channel, channelLabel, imgPath };
+                confirmText.textContent = "Detected " + variant.label + ". Ready to flash: " + channelLabel + ".";
+                connectBtn.style.display = "none";
+                confirmPanel.classList.add("show");
+                setStatus("Device found. Click “Flash now” to start, or Cancel.", "info");
+            } catch (err) {
+                console.error(err);
+                const m = (err && err.message) ? err.message : String(err);
+                if (/No port selected|cancelled/i.test(m)) setStatus("Cancelled — no device selected.", "info");
+                else setStatus("Error: " + m + " — nothing was flashed.", "err");
+                logLine("ERROR: " + m);
+                await safeDisconnect(transport);
+                resetMainUI();
+            }
+        });
+
+        // STEP 2 — user confirmed: download the image and write it
+        confirmBtn.addEventListener("click", async () => {
+            if (!pending) return;
+            const p = pending;
+            pending = null;
+            confirmBtn.disabled = true;
+            cancelBtn.disabled = true;
+
+            try {
+                setStatus("Downloading the matching " + p.channelLabel + "...", "info");
+                logLine("Firmware: " + p.imgPath);
+                const resp = await fetch(p.imgPath);
+                if (!resp.ok) throw new Error("Could not download firmware (" + resp.status + ")");
+                const bytes = new Uint8Array(await resp.arrayBuffer());
+                logLine("Firmware size: " + (bytes.length / 1024 / 1024).toFixed(2) + " MB");
+                const dataStr = ui8ToBinaryString(bytes);
+
+                setStatus("Flashing " + p.variant.label + " (" + p.channelLabel + "). Do not disconnect...", "info");
+                progWrap.classList.add("show");
+
+                await p.esploader.writeFlash({
+                    fileArray: [{ data: dataStr, address: 0 }],
+                    flashSize: "keep",
+                    flashMode: "keep",
+                    flashFreq: "keep",
+                    eraseAll: true,
+                    compress: true,
+                    reportProgress: (fileIndex, written, total) => {
+                        progBar.style.width = Math.round((written / total) * 100) + "%";
+                    }
+                });
+
+                progBar.style.width = "100%";
+                setStatus("Done! " + p.variant.label + " (" + p.channelLabel + ") flashed successfully. Your BlockBoy will restart.", "ok");
+                try { await p.esploader.after("hard_reset"); } catch (e) { /* reset is best-effort */ }
+            } catch (err) {
+                console.error(err);
+                const m = (err && err.message) ? err.message : String(err);
+                setStatus("Error: " + m, "err");
+                logLine("ERROR: " + m);
+            } finally {
+                await safeDisconnect(p.transport);
+                confirmBtn.disabled = false;
+                cancelBtn.disabled = false;
+                resetMainUI();
+            }
+        });
+
+        // Cancel the pending flash and release the device
+        cancelBtn.addEventListener("click", async () => {
+            const p = pending;
+            pending = null;
+            setStatus("Cancelled — nothing was flashed.", "info");
+            if (p) await safeDisconnect(p.transport);
+            resetMainUI();
+        });
+
+        async function safeDisconnect(transport) {
+            try { if (transport) await transport.disconnect(); } catch (e) { /* ignore */ }
+        }
+
+        // ============================================================
+        //  ADVANCED — RECOVERY (no confirm step)
+        //  Catches a stuck / reboot-looping device and re-flashes it the
+        //  instant it is caught, so you don't have to be quick. Reuses an
+        //  already-granted port (usually no popup). Still verifies the
+        //  hardware via flash size before writing.
+        // ============================================================
+        const recoveryBtn = document.getElementById("recoveryBtn");
+
+        recoveryBtn.addEventListener("click", async () => {
+            const channel = firmwareSelect.value;
+            recoveryBtn.disabled = true;
+            connectBtn.disabled = true;
+            serialBtn.disabled = true;
+            progWrap.classList.remove("show");
+            progBar.style.width = "0%";
+            logEl.classList.add("show");
+            let transport;
+
+            try {
+                // Reuse a previously granted port if available (no popup); else ask once.
+                const granted = await navigator.serial.getPorts();
+                const port = granted.length ? granted[granted.length - 1] : await navigator.serial.requestPort();
+
+                setStatus("Recovery: searching for the device... keep it plugged in.", "info");
+                const conn = await connectWithRetry(port, 60000);
+                transport = conn.transport;
+                logLine("Chip: " + conn.chip);
+
+                const flashKB = await conn.esploader.getFlashSize();
+                logLine("Detected flash size: " + (flashKB ? flashKB + " KB" : "unknown"));
+                const variant = FIRMWARE[flashKB];
+                if (!variant) { setStatus("Unknown device (flash " + (flashKB || "?") + " KB). Nothing was flashed.", "err"); return; }
+                const imgPath = variant[channel];
+                const channelLabel = channelLabelFor(channel);
+                if (!imgPath) { setStatus("No " + channelLabel + " available for " + variant.label + " yet. Nothing was flashed.", "err"); return; }
+
+                // Flash immediately, no confirm.
+                setStatus("Recovery: flashing " + variant.label + " (" + channelLabel + "). Do not disconnect...", "info");
+                logLine("Firmware: " + imgPath);
+                const resp = await fetch(imgPath);
+                if (!resp.ok) throw new Error("Could not download firmware (" + resp.status + ")");
+                const bytes = new Uint8Array(await resp.arrayBuffer());
+                const dataStr = ui8ToBinaryString(bytes);
+                progWrap.classList.add("show");
+                await conn.esploader.writeFlash({
+                    fileArray: [{ data: dataStr, address: 0 }],
+                    flashSize: "keep",
+                    flashMode: "keep",
+                    flashFreq: "keep",
+                    eraseAll: true,
+                    compress: true,
+                    reportProgress: (fileIndex, written, total) => {
+                        progBar.style.width = Math.round((written / total) * 100) + "%";
+                    }
+                });
+                progBar.style.width = "100%";
+                setStatus("Recovered! " + variant.label + " (" + channelLabel + ") flashed. Your BlockBoy will restart.", "ok");
+                try { await conn.esploader.after("hard_reset"); } catch (e) { /* best-effort */ }
+            } catch (err) {
+                console.error(err);
+                const m = (err && err.message) ? err.message : String(err);
+                if (/No port selected|cancelled/i.test(m)) setStatus("Cancelled — no device selected.", "info");
+                else setStatus("Recovery error: " + m, "err");
+                logLine("ERROR: " + m);
+            } finally {
+                await safeDisconnect(transport);
+                recoveryBtn.disabled = false;
+                connectBtn.disabled = false;
+                serialBtn.disabled = false;
+            }
+        });
+
+        // ============================================================
+        //  ADVANCED — CUSTOM FIRMWARE
+        //  Flash a user-provided .img. Still detects the device and refuses a
+        //  file that is larger than the flash chip (the classic brick case).
+        // ============================================================
+        const customFile = document.getElementById("customFile");
+        const customBtn = document.getElementById("customBtn");
+
+        customBtn.addEventListener("click", async () => {
+            const file = customFile.files && customFile.files[0];
+            if (!file) { setStatus("Pick a .img file first.", "err"); return; }
+
+            customBtn.disabled = true;
+            recoveryBtn.disabled = true;
+            connectBtn.disabled = true;
+            serialBtn.disabled = true;
+            progWrap.classList.remove("show");
+            progBar.style.width = "0%";
+            logEl.classList.add("show");
+            let transport;
+
+            try {
+                const granted = await navigator.serial.getPorts();
+                const port = granted.length ? granted[granted.length - 1] : await navigator.serial.requestPort();
+
+                setStatus("Connecting... keep the device plugged in.", "info");
+                const conn = await connectWithRetry(port, 60000);
+                transport = conn.transport;
+                logLine("Chip: " + conn.chip);
+
+                const flashKB = await conn.esploader.getFlashSize();
+                logLine("Detected flash size: " + (flashKB ? flashKB + " KB" : "unknown"));
+
+                const buf = new Uint8Array(await file.arrayBuffer());
+                logLine("Custom file: " + file.name + " (" + (buf.length / 1024 / 1024).toFixed(2) + " MB)");
+
+                // Safety: never write an image bigger than the chip (would brick it).
+                if (flashKB && buf.length > flashKB * 1024) {
+                    setStatus("Refused: this file (" + (buf.length / 1024 / 1024).toFixed(2) + " MB) is larger than the device flash (" + (flashKB / 1024) + " MB). Flashing it would brick the device. Nothing was written.", "err");
+                    return;
+                }
+
+                const dataStr = ui8ToBinaryString(buf);
+                setStatus("Flashing custom firmware: " + file.name + ". Do not disconnect...", "info");
+                progWrap.classList.add("show");
+                await conn.esploader.writeFlash({
+                    fileArray: [{ data: dataStr, address: 0 }],
+                    flashSize: "keep",
+                    flashMode: "keep",
+                    flashFreq: "keep",
+                    eraseAll: true,
+                    compress: true,
+                    reportProgress: (fileIndex, written, total) => {
+                        progBar.style.width = Math.round((written / total) * 100) + "%";
+                    }
+                });
+                progBar.style.width = "100%";
+                setStatus("Done! Custom firmware flashed (" + file.name + "). Your BlockBoy will restart.", "ok");
+                try { await conn.esploader.after("hard_reset"); } catch (e) { /* best-effort */ }
+            } catch (err) {
+                console.error(err);
+                const m = (err && err.message) ? err.message : String(err);
+                if (/No port selected|cancelled/i.test(m)) setStatus("Cancelled — no device selected.", "info");
+                else setStatus("Error: " + m, "err");
+                logLine("ERROR: " + m);
+            } finally {
+                await safeDisconnect(transport);
+                customBtn.disabled = false;
+                recoveryBtn.disabled = false;
+                connectBtn.disabled = false;
+                serialBtn.disabled = false;
+            }
+        });
+
+        // ============================================================
+        //  SERIAL MONITOR
+        //  Opens the device's USB serial console (115200 baud) and streams
+        //  its log output into the box. Handy for testing/debugging.
+        // ============================================================
+        let serialPort = null, serialReader = null, serialClosed = null, monitoring = false;
+        const serialInputRow = document.getElementById("serialInputRow");
+        const serialInput = document.getElementById("serialInput");
+        const serialSendBtn = document.getElementById("serialSendBtn");
+
+        serialBtn.addEventListener("click", async () => {
+            if (monitoring) { await stopSerial(); return; }
+            try {
+                serialPort = await navigator.serial.requestPort();
+                await serialPort.open({ baudRate: 115200 });
+                monitoring = true;
+                serialBtn.textContent = "Stop serial monitor";
+                serialBtn.classList.add("active");
+                connectBtn.disabled = true;
+                logEl.classList.add("show");
+                logEl.textContent = "";
+                serialInputRow.classList.add("show");
+                serialInput.focus();
+                setStatus("Serial monitor running (115200 baud). Reset the device to see boot logs.", "info");
+                readSerialLoop();
+            } catch (err) {
+                const m = (err && err.message) ? err.message : String(err);
+                if (/No port selected|cancelled/i.test(m)) setStatus("Cancelled — no device selected.", "info");
+                else setStatus("Serial error: " + m, "err");
+                await stopSerial();
+            }
+        });
+
+        async function readSerialLoop() {
+            const decoder = new TextDecoderStream();
+            serialClosed = serialPort.readable.pipeTo(decoder.writable).catch(() => {});
+            serialReader = decoder.readable.getReader();
+            try {
+                while (true) {
+                    const { value, done } = await serialReader.read();
+                    if (done) break;
+                    if (value) { logEl.textContent += value; logEl.scrollTop = logEl.scrollHeight; }
+                }
+            } catch (e) { /* reader cancelled on stop */ }
+        }
+
+        async function stopSerial() {
+            monitoring = false;
+            serialBtn.textContent = "Open serial monitor";
+            serialBtn.classList.remove("active");
+            serialInputRow.classList.remove("show");
+            connectBtn.disabled = false;
+            try { if (serialReader) await serialReader.cancel(); } catch (_) {}
+            try { if (serialClosed) await serialClosed; } catch (_) {}
+            try { if (serialPort) await serialPort.close(); } catch (_) {}
+            serialReader = null; serialPort = null; serialClosed = null;
+        }
+
+        // Send what you type to the device over serial (TX).
+        async function serialSend() {
+            if (!monitoring || !serialPort) return;
+            const text = serialInput.value;
+            serialInput.value = "";
+            try {
+                const writer = serialPort.writable.getWriter();
+                await writer.write(new TextEncoder().encode(text + "\r\n"));
+                writer.releaseLock();
+                logEl.textContent += "> " + text + "\n";   // echo what was sent
+                logEl.scrollTop = logEl.scrollHeight;
+            } catch (e) {
+                logLine("Send error: " + ((e && e.message) ? e.message : e));
+            }
+        }
+        serialSendBtn.addEventListener("click", serialSend);
+        serialInput.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") { e.preventDefault(); serialSend(); }
         });
     </script>
 </body>
