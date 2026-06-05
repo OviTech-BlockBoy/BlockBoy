@@ -160,6 +160,7 @@
                         <h3>Instructions</h3>
                         <ul>
                             <li>Connect with a USB-A to USB-C cable</li>
+                            <li>Turn the BlockBoy on</li>
                             <li>Click "Connect device" and pick the port in the popup</li>
                             <li>Your device is detected automatically</li>
                             <li>Confirm, then wait ~1-2 minutes</li>
@@ -425,7 +426,7 @@
                 });
 
                 progBar.style.width = "100%";
-                setStatus("Done! " + p.variant.label + " (" + p.channelLabel + ") flashed successfully. Your BlockBoy will restart.", "ok");
+                setStatus("Done! " + p.variant.label + " (" + p.channelLabel + ") flashed successfully. Turn your BlockBoy off and on to start it.", "ok");
                 try { await p.esploader.after("hard_reset"); } catch (e) { /* reset is best-effort */ }
             } catch (err) {
                 console.error(err);
@@ -510,7 +511,7 @@
                     }
                 });
                 progBar.style.width = "100%";
-                setStatus("Recovered! " + variant.label + " (" + channelLabel + ") flashed. Your BlockBoy will restart.", "ok");
+                setStatus("Recovered! " + variant.label + " (" + channelLabel + ") flashed. Turn your BlockBoy off and on to start it.", "ok");
                 try { await conn.esploader.after("hard_reset"); } catch (e) { /* best-effort */ }
             } catch (err) {
                 console.error(err);
@@ -583,7 +584,7 @@
                     }
                 });
                 progBar.style.width = "100%";
-                setStatus("Done! Custom firmware flashed (" + file.name + "). Your BlockBoy will restart.", "ok");
+                setStatus("Done! Custom firmware flashed (" + file.name + "). Turn your BlockBoy off and on to start it.", "ok");
                 try { await conn.esploader.after("hard_reset"); } catch (e) { /* best-effort */ }
             } catch (err) {
                 console.error(err);
