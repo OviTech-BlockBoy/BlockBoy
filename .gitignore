@@ -3,5 +3,8 @@ __pycache__/
 *.pyc
 *.img
 *.bin
+# The web flasher serves its images straight from this folder, so those
+# have to be in the repo despite the rule above.
+!Flash/*.img
 .vscode/
 sdkconfig.old
