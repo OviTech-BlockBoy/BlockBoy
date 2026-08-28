@@ -7,31 +7,31 @@
   "files": [
     {
       "partition": "launcher",
-      "url": "https://github.com/OviTech-BlockBoy/BlockBoy/releases/download/v3.1.0/launcher.bin",
+      "url": "https://github.com/OviTech-BlockBoy/BlockBoy/releases/download/v3.1.0/launcher.bin?b=2",
       "sha256": "eb77f6416e6ada10118a9116bb96e426e51c60415e440f0051336f30055571e4",
       "size": 1703568
     },
     {
       "partition": "retro-core",
-      "url": "https://github.com/OviTech-BlockBoy/BlockBoy/releases/download/v3.1.0/retro-core.bin",
+      "url": "https://github.com/OviTech-BlockBoy/BlockBoy/releases/download/v3.1.0/retro-core.bin?b=2",
       "sha256": "ce880fe37855ef5ca4f41b04f5871fb45dd2d171a071c1c2825f197e2dc0e3d2",
       "size": 1626672
     },
     {
       "partition": "prboom-go",
-      "url": "https://github.com/OviTech-BlockBoy/BlockBoy/releases/download/v3.1.0/prboom-go.bin",
+      "url": "https://github.com/OviTech-BlockBoy/BlockBoy/releases/download/v3.1.0/prboom-go.bin?b=2",
       "sha256": "47eaae62333ee65dab492a7f51e6539fa79d7d34426c410f9a35a581a2c451d1",
       "size": 1378880
     },
     {
       "partition": "gwenesis",
-      "url": "https://github.com/OviTech-BlockBoy/BlockBoy/releases/download/v3.1.0/gwenesis.bin",
+      "url": "https://github.com/OviTech-BlockBoy/BlockBoy/releases/download/v3.1.0/gwenesis.bin?b=2",
       "sha256": "2bdfd41c454a9c056d802195f260b5fa542dbd2c62d95c60bb0b65c36a0d1fa7",
       "size": 1528768
     },
     {
       "partition": "gbsp",
-      "url": "https://github.com/OviTech-BlockBoy/BlockBoy/releases/download/v3.1.0/gbsp.bin",
+      "url": "https://github.com/OviTech-BlockBoy/BlockBoy/releases/download/v3.1.0/gbsp.bin?b=2",
       "sha256": "ec834d454ae8f7eb576149d2c085b1c87663bc99bc03e797022de13b25b3d3bd",
       "size": 871760
     }
