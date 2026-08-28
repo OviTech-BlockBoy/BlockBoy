@@ -443,14 +443,16 @@ void app_main(void)
     user_frameskip = rg_settings_get_number(NS_APP, SETTING_FRAMESKIP, 0);
     app->frameskip = user_frameskip;
 
-    // Default scaling = Off (native 240x160, centered) on first run. The retro-go
-    // global default is Full; we only override when the user hasn't picked a value
+    // Default scaling = Fit on first run: the GBA is 240x160 on a 320x240 panel,
+    // so Off would leave it at half the screen area while every other emulator
+    // fills it. Fit keeps the 3:2 aspect ratio. The retro-go global default is
+    // Full, which stretches; we only override when the user hasn't picked a value
     // yet (sentinel < 0). After that rg_display_set_scaling persists the choice.
     if (rg_settings_get_number(NS_APP, "DispScaling", -1) < 0)
-        rg_display_set_scaling(RG_DISPLAY_SCALING_OFF);
+        rg_display_set_scaling(RG_DISPLAY_SCALING_FIT);
 
-    // Xtensa JIT: translation cache in dual-mapped executable PSRAM. Off by default;
-    // enable via Options → CPU core. On init failure: silently back to classic.
+    // Xtensa JIT: translation cache in dual-mapped executable PSRAM. On by default;
+    // toggle via Options → CPU core. On init failure: silently back to classic.
 #ifdef ESP_PLATFORM
     {
         // 2MB: at 1MB (~3300 blocks of ~300B) the cache filled every 1-2s in busy
