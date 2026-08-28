@@ -1,0 +1,28 @@
+__pycache__/
+.DS_Store/
+.cache/
+.vscode/
+.claude/
+build/
+managed_components/
+# dependencies.lock is deliberately NOT ignored: it pins the exact
+# component versions this firmware was built and tested against.
+
+# ESP32 build artifacts
+/partitions.bin
+/partitions.csv
+/sdkconfig.old
+/sdkconfig
+/*/sdkconfig.old
+/*/sdkconfig
+*.fw
+*.img
+*.zip
+*.log
+*.bak*
+*.o
+
+# ROMs — never commit (copyright + binary bloat)
+*.gba
+*.gb
+*.gbc

@@ -1,0 +1,34 @@
+#include "shared.h"
+#ifdef RG_ENABLE_NETPLAY
+#include <nvs_flash.h>
+#endif
+
+
+void app_main(void)
+{
+#ifdef RG_ENABLE_NETPLAY
+    if (nvs_flash_init() != ESP_OK && nvs_flash_erase() == ESP_OK)
+        nvs_flash_init();
+#endif
+
+    rg_app_t *app = rg_system_init(AUDIO_SAMPLE_RATE, NULL, NULL);
+
+    RG_LOGI("configNs=%s", app->configNs);
+
+    if (strcmp(app->configNs, "gbc") == 0 || strcmp(app->configNs, "gb") == 0)
+        gbc_main();
+    else if (strcmp(app->configNs, "nes") == 0)
+        nes_main();
+    else if (strcmp(app->configNs, "sms") == 0)
+        sms_main();
+    else if (strcmp(app->configNs, "gg") == 0)
+        sms_main();
+    else if (strcmp(app->configNs, "col") == 0)
+        sms_main();
+    else if (strcmp(app->configNs, "gw") == 0)
+        gw_main();
+    else
+        launcher_main();
+
+    RG_PANIC("Never reached");
+}

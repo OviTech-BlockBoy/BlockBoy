@@ -1,0 +1,44 @@
+{
+  "dialog": {
+    "background": "0x9DE1",
+    "header": "0x09C1",
+    "border": "0x3306",
+    "item_standard": "0x09C1",
+    "item_disabled": "0x3306",
+    "item_message": "0x3306",
+    "scrollbar": "0x09C1",
+    "shadow": "none"
+  },
+  "launcher_1": {
+    "background": "0x9DE1",
+    "foreground": "0x09C1",
+    "list_standard_bg": "transparent",
+    "list_standard_fg": "0x3306",
+    "list_selected_bg": "0x8D61",
+    "list_selected_fg": "0x09C1"
+  },
+  "launcher_2": {
+    "background": "0x9DE1",
+    "foreground": "0x09C1",
+    "list_standard_bg": "transparent",
+    "list_standard_fg": "0x3306",
+    "list_selected_bg": "0x8D61",
+    "list_selected_fg": "0x09C1"
+  },
+  "launcher_3": {
+    "background": "0x9DE1",
+    "foreground": "0x09C1",
+    "list_standard_bg": "transparent",
+    "list_standard_fg": "0x3306",
+    "list_selected_bg": "0x8D61",
+    "list_selected_fg": "0x09C1"
+  },
+  "launcher_4": {
+    "background": "0x9DE1",
+    "foreground": "0x09C1",
+    "list_standard_bg": "transparent",
+    "list_standard_fg": "0x3306",
+    "list_selected_bg": "0x8D61",
+    "list_selected_fg": "0x09C1"
+  }
+}

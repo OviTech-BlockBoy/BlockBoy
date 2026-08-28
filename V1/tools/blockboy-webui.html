@@ -1,0 +1,1057 @@
+<title>BlockBoy — SD Card</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root {
+  --bg: #eef0e6;
+  --surface: #ffffff;
+  --surface2: #e3e6d8;
+  --ink: #232819;
+  --muted: #6b7260;
+  --line: #c9cdbb;
+  --accent: #55731f;
+  --accent-ink: #ffffff;
+  --screen: #b7c98a;
+  --screen-ink: #2c3a12;
+  --danger: #a63a24;
+  --shadow: #9aa088;
+  --mono: ui-monospace, "Cascadia Mono", "Roboto Mono", Menlo, Consolas, monospace;
+  --sans: -apple-system, "Segoe UI", Roboto, system-ui, "Helvetica Neue", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #171a13; --surface: #21251b; --surface2: #2a2f22; --ink: #e6e9da;
+    --muted: #99a188; --line: #383e2d; --accent: #9bbb3c; --accent-ink: #1a2005;
+    --screen: #33401c; --screen-ink: #c4d896; --danger: #e0684a; --shadow: #0c0e09;
+  }
+}
+:root[data-theme="light"] {
+  --bg: #eef0e6; --surface: #ffffff; --surface2: #e3e6d8; --ink: #232819;
+  --muted: #6b7260; --line: #c9cdbb; --accent: #55731f; --accent-ink: #ffffff;
+  --screen: #b7c98a; --screen-ink: #2c3a12; --danger: #a63a24; --shadow: #9aa088;
+}
+:root[data-theme="dark"] {
+  --bg: #171a13; --surface: #21251b; --surface2: #2a2f22; --ink: #e6e9da;
+  --muted: #99a188; --line: #383e2d; --accent: #9bbb3c; --accent-ink: #1a2005;
+  --screen: #33401c; --screen-ink: #c4d896; --danger: #e0684a; --shadow: #0c0e09;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg); color: var(--ink);
+  font-family: var(--sans); font-size: 15px; line-height: 1.45;
+  -webkit-tap-highlight-color: transparent;
+}
+.wrap { max-width: 760px; margin: 0 auto; padding: 0 12px 110px; }
+
+/* ---------- header ---------- */
+header { display: flex; align-items: center; gap: 12px; padding: 14px 2px 8px; }
+.brand { display: flex; flex-direction: column; min-width: 0; }
+.brand b { font-family: var(--mono); font-size: 19px; letter-spacing: -0.5px; line-height: 1.1; }
+.brand span { font-size: 11px; text-transform: uppercase; letter-spacing: 1.4px; color: var(--muted); }
+.demo-pill {
+  margin-left: auto; flex: none;
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.5px;
+  padding: 3px 9px; border-radius: 999px;
+  background: var(--screen); color: var(--screen-ink);
+  display: none;
+}
+.demo .demo-pill { display: inline-block; }
+
+/* ---------- device status strip ---------- */
+.devbar {
+  display: none; align-items: center; gap: 14px;
+  font-family: var(--mono); font-size: 11.5px; color: var(--muted);
+  padding: 0 2px 10px; flex-wrap: wrap;
+  font-variant-numeric: tabular-nums;
+}
+.devbar.on { display: flex; }
+.devbar .cell { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.devbar .batt { width: 22px; height: 11px; border: 1.5px solid var(--muted); border-radius: 3px; position: relative; }
+.devbar .batt::after { content: ""; position: absolute; right: -4px; top: 2.5px; width: 2.5px; height: 4px; background: var(--muted); border-radius: 0 1px 1px 0; }
+.devbar .batt i { position: absolute; inset: 1.5px; width: var(--lvl, 50%); background: var(--accent); border-radius: 1px; }
+.devbar .batt.low i { background: var(--danger); }
+.devbar .spacefill { flex: 1; min-width: 110px; display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
+.devbar .track { width: 90px; height: 5px; border-radius: 3px; background: var(--surface2); border: 1px solid var(--line); overflow: hidden; }
+.devbar .track i { display: block; height: 100%; width: var(--used, 0%); background: var(--accent); }
+
+/* ---------- breadcrumb "screen" ---------- */
+.pathbar {
+  background: var(--screen); color: var(--screen-ink);
+  border-radius: 8px; border: 2px solid var(--line);
+  box-shadow: inset 0 2px 6px rgba(0,0,0,0.22);
+  padding: 8px 10px;
+  display: flex; align-items: center; gap: 2px;
+  overflow-x: auto; white-space: nowrap;
+  font-family: var(--mono); font-size: 13px;
+  scrollbar-width: none;
+}
+.pathbar::-webkit-scrollbar { display: none; }
+.pathbar button {
+  appearance: none; border: 0; background: none; font: inherit; color: inherit;
+  padding: 4px 6px; border-radius: 5px; cursor: pointer;
+}
+.pathbar button:hover, .pathbar button:focus-visible { background: rgba(0,0,0,0.14); outline: none; }
+.pathbar .sep { opacity: 0.55; }
+.pathbar .here { font-weight: 700; padding: 4px 6px; }
+
+/* ---------- toolbar ---------- */
+.toolbar { display: flex; gap: 8px; align-items: center; padding: 12px 0 0; flex-wrap: wrap; }
+.btn {
+  appearance: none; cursor: pointer;
+  font: 600 14px var(--sans);
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 9px 13px; min-height: 40px;
+  color: var(--ink); background: var(--surface);
+  border: 2px solid var(--line); border-radius: 8px;
+  box-shadow: 0 2px 0 var(--shadow);
+  transition: transform 60ms ease, box-shadow 60ms ease;
+}
+.btn:active { transform: translateY(2px); box-shadow: 0 0 0 var(--shadow); }
+.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn.icon { padding: 9px 11px; }
+.btn.active { background: var(--screen); border-color: var(--accent); color: var(--screen-ink); }
+.btn svg { flex: none; }
+.spacer { flex: 1; }
+@media (prefers-reduced-motion: reduce) {
+  .btn, .sheet, .modal-card, .toast { transition: none !important; animation: none !important; }
+}
+
+/* ---------- search ---------- */
+.searchrow { position: relative; padding: 10px 0; }
+.searchrow svg { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--muted); pointer-events: none; }
+.searchrow input {
+  width: 100%; padding: 10px 34px 10px 36px; min-height: 40px;
+  font: 14px var(--sans); color: var(--ink);
+  background: var(--surface); border: 2px solid var(--line); border-radius: 8px;
+}
+.searchrow input:focus-visible { outline: none; border-color: var(--accent); }
+.searchrow .clear {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  appearance: none; border: 0; background: none; color: var(--muted);
+  width: 32px; height: 32px; border-radius: 6px; cursor: pointer; display: none;
+}
+.searchrow .clear:hover { background: var(--surface2); }
+.searchrow.has-q .clear { display: block; }
+
+/* ---------- upload progress ---------- */
+.uploads { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.up-item { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; }
+.up-item .nm { display: flex; justify-content: space-between; gap: 10px; font-family: var(--mono); font-size: 12.5px; }
+.up-item .nm em { font-style: normal; color: var(--muted); font-variant-numeric: tabular-nums; }
+.up-item .track { height: 5px; margin-top: 6px; border-radius: 3px; background: var(--surface2); overflow: hidden; }
+.up-item .fill { height: 100%; width: 0%; background: var(--accent); border-radius: 3px; }
+
+/* ---------- file list ---------- */
+.list { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.row {
+  display: flex; align-items: center; gap: 12px;
+  width: 100%; padding: 0 6px 0 12px; min-height: 54px;
+  border: 0; border-bottom: 1px solid var(--line);
+  background: none; color: inherit; font: inherit;
+  text-align: left; cursor: pointer;
+}
+.list > :last-child { border-bottom: 0; }
+.row:hover { background: var(--surface2); }
+.row:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+.row.checked { background: color-mix(in srgb, var(--accent) 14%, var(--surface)); }
+.row .fic { flex: none; width: 26px; display: flex; justify-content: center; }
+.row .cbox {
+  width: 20px; height: 20px; border-radius: 6px;
+  border: 2px solid var(--muted); flex: none;
+  display: flex; align-items: center; justify-content: center;
+  color: transparent;
+}
+.row.checked .cbox { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.row .info { flex: 1; min-width: 0; padding: 8px 0; }
+.row .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.row .meta {
+  font-family: var(--mono); font-size: 11.5px; color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.row .kebab {
+  flex: none; appearance: none; border: 0; background: none; cursor: pointer;
+  width: 42px; height: 42px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--muted);
+}
+.row .kebab:hover { background: var(--line); color: var(--ink); }
+.row .kebab:focus-visible { outline: 2px solid var(--accent); }
+.empty { padding: 42px 20px; text-align: center; color: var(--muted); }
+.empty b { display: block; color: var(--ink); margin-bottom: 4px; }
+.count { padding: 10px 4px; font-family: var(--mono); font-size: 11.5px; color: var(--muted); text-align: center; }
+
+/* ---------- selection bar ---------- */
+.bulkbar {
+  position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%) translateY(90px);
+  z-index: 35; display: flex; gap: 8px; align-items: center;
+  background: var(--surface); border: 2px solid var(--line); border-radius: 12px;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.3);
+  padding: 8px 10px; max-width: calc(100vw - 20px);
+  transition: transform 200ms ease;
+}
+.bulkbar.on { transform: translateX(-50%) translateY(0); }
+.bulkbar .n { font: 600 13px var(--mono); padding: 0 6px; white-space: nowrap; }
+.bulkbar .btn { min-height: 38px; padding: 7px 11px; font-size: 13px; }
+
+/* ---------- action sheet / dropdown ---------- */
+.scrim { position: fixed; inset: 0; background: rgba(0,0,0,0.45); display: none; z-index: 40; }
+.scrim.open { display: block; }
+.sheet {
+  position: fixed; left: 0; right: 0; bottom: -100%;
+  z-index: 41; background: var(--surface);
+  border-radius: 16px 16px 0 0; border-top: 2px solid var(--line);
+  padding: 10px 14px calc(14px + env(safe-area-inset-bottom));
+  max-width: 560px; margin: 0 auto;
+  transition: bottom 200ms ease;
+}
+.sheet.open { bottom: 0; }
+.sheet .grip { width: 36px; height: 4px; border-radius: 2px; background: var(--line); margin: 2px auto 10px; }
+.sheet h4 {
+  margin: 0 0 8px; font-family: var(--mono); font-size: 13px; font-weight: 400; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.sheet button.item {
+  display: flex; align-items: center; gap: 12px;
+  width: 100%; min-height: 48px; padding: 0 10px;
+  appearance: none; background: none; border: 0; border-radius: 8px;
+  font: 500 15px var(--sans); color: var(--ink); cursor: pointer; text-align: left;
+}
+.sheet button.item:hover, .sheet button.item:focus-visible { background: var(--surface2); outline: none; }
+.sheet button.item.danger { color: var(--danger); }
+.sheet button.item .now { margin-left: auto; color: var(--accent); }
+
+/* ---------- modal ---------- */
+.modal {
+  position: fixed; inset: 0; z-index: 50;
+  display: none; align-items: center; justify-content: center;
+  background: rgba(0,0,0,0.45); padding: 16px;
+}
+.modal.open { display: flex; }
+.modal-card {
+  background: var(--surface); border: 2px solid var(--line); border-radius: 12px;
+  width: 100%; max-width: 400px; padding: 18px;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.35);
+  max-height: 86vh; display: flex; flex-direction: column;
+}
+.modal-card h3 { margin: 0 0 4px; font-size: 16px; }
+.modal-card p { margin: 0 0 12px; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.modal-card input {
+  width: 100%; padding: 10px 12px; margin-bottom: 14px;
+  font: 14px var(--mono); color: var(--ink);
+  background: var(--bg); border: 2px solid var(--line); border-radius: 8px;
+}
+.modal-card input:focus-visible { outline: none; border-color: var(--accent); }
+.modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.btn.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+
+/* folder picker inside modal */
+.picker-path {
+  font-family: var(--mono); font-size: 12px; color: var(--screen-ink);
+  background: var(--screen); border-radius: 6px; padding: 6px 10px; margin-bottom: 8px;
+  overflow-x: auto; white-space: nowrap; scrollbar-width: none;
+}
+.picker-list { border: 1px solid var(--line); border-radius: 8px; overflow-y: auto; min-height: 120px; max-height: 40vh; margin-bottom: 14px; }
+.picker-list button {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; min-height: 44px; padding: 0 12px;
+  appearance: none; background: none; border: 0; border-bottom: 1px solid var(--line);
+  font: 500 14px var(--sans); color: var(--ink); cursor: pointer; text-align: left;
+}
+.picker-list button:last-child { border-bottom: 0; }
+.picker-list button:hover, .picker-list button:focus-visible { background: var(--surface2); outline: none; }
+.picker-list .none { padding: 20px; text-align: center; color: var(--muted); font-size: 13px; }
+
+/* ---------- image / text viewer ---------- */
+.viewer-card { max-width: min(680px, 94vw); }
+.viewer-card img { max-width: 100%; max-height: 60vh; display: block; margin: 0 auto 14px; border-radius: 8px; background: var(--surface2); image-rendering: pixelated; }
+.viewer-card pre {
+  background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
+  padding: 12px; margin: 0 0 14px;
+  font: 12px/1.5 var(--mono); overflow: auto; max-height: 55vh; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+
+/* ---------- toast ---------- */
+.toast {
+  position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%) translateY(80px);
+  z-index: 60; background: var(--ink); color: var(--bg);
+  font: 500 13.5px var(--sans);
+  padding: 10px 18px; border-radius: 999px;
+  max-width: min(90vw, 480px);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  transition: transform 220ms ease; pointer-events: none;
+}
+.toast.show { transform: translateX(-50%) translateY(0); }
+
+/* ---------- desktop ---------- */
+@media (min-width: 640px) {
+  body { font-size: 14px; }
+  .row { min-height: 46px; }
+  .row .info { display: flex; align-items: baseline; gap: 14px; }
+  .row .name { flex: 1; }
+  .row .meta { flex: none; width: 210px; text-align: right; }
+  .sheet {
+    position: absolute; left: auto; right: auto; bottom: auto;
+    /* Desktop has no slide-in, so visibility is a plain display toggle. Without
+       this the closed sheet stayed on screen (mobile hides it via bottom:-100%,
+       which desktop overrides to auto) and no dismiss could hide it. */
+    display: none;
+    border-radius: 10px; border: 2px solid var(--line);
+    padding: 6px; width: 230px; height: auto;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.25);
+    transition: none;
+  }
+  .sheet.open { display: block; bottom: auto; }
+  .sheet .grip, .sheet h4 { display: none; }
+  .sheet button.item { min-height: 40px; font-size: 14px; }
+  .scrim { background: transparent; }
+}
+.drophint {
+  position: fixed; inset: 10px; z-index: 30; display: none;
+  border: 3px dashed var(--accent); border-radius: 14px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  align-items: center; justify-content: center;
+  font: 700 18px var(--sans); color: var(--accent);
+  pointer-events: none;
+}
+body.dragging .drophint { display: flex; }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <b>BlockBoy</b>
+      <span>SD-card manager</span>
+    </div>
+    <span class="demo-pill">demo</span>
+  </header>
+
+  <div class="devbar" id="devbar">
+    <span class="cell"><span class="batt" id="batt"><i></i></span><span id="batt-txt"></span></span>
+    <span class="cell" id="fw-txt"></span>
+    <span class="spacefill"><span id="space-txt"></span><span class="track"><i id="space-fill"></i></span></span>
+  </div>
+
+  <nav class="pathbar" id="pathbar" aria-label="Folder path"></nav>
+
+  <div class="toolbar">
+    <button class="btn primary" id="btn-upload">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 12V3M4 7l4-4 4 4M2 13.5h12"/></svg>
+      Upload
+    </button>
+    <input type="file" id="upload" multiple hidden>
+    <button class="btn" id="btn-newfolder">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 4.5v8h13v-6.5H8L6.5 4.5z"/><path d="M11 8v3M9.5 9.5h3"/></svg>
+      New folder
+    </button>
+    <span class="spacer"></span>
+    <button class="btn icon" id="btn-select" aria-label="Select multiple">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="9" height="9" rx="2"/><path d="M4.8 6.6l1.6 1.6 3-3.4"/><path d="M14 6v6a2 2 0 0 1-2 2H6"/></svg>
+    </button>
+    <button class="btn icon" id="btn-sort" aria-label="Sort">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3v10M5 13l-2.5-2.5M5 13l2.5-2.5M11 13V3M11 3L8.5 5.5M11 3l2.5 2.5"/></svg>
+    </button>
+    <button class="btn icon" id="btn-refresh" aria-label="Refresh">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 1.5v3h-3"/></svg>
+    </button>
+  </div>
+
+  <div class="searchrow" id="searchrow">
+    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg>
+    <input type="search" id="search" placeholder="Search in this folder" autocomplete="off">
+    <button class="clear" id="search-clear" aria-label="Clear search">✕</button>
+  </div>
+
+  <div class="uploads" id="uploads"></div>
+
+  <div class="list" id="list" role="list"></div>
+  <div class="count" id="count"></div>
+</div>
+
+<div class="drophint">Drop files to upload</div>
+
+<div class="bulkbar" id="bulkbar">
+  <span class="n" id="bulk-n">0</span>
+  <button class="btn" id="bulk-download">Download</button>
+  <button class="btn" id="bulk-move">Move</button>
+  <button class="btn danger" id="bulk-delete">Delete</button>
+  <button class="btn icon" id="bulk-cancel" aria-label="Cancel selection">✕</button>
+</div>
+
+<div class="scrim" id="scrim"></div>
+<div class="sheet" id="sheet" role="menu"></div>
+
+<div class="modal" id="modal">
+  <div class="modal-card" role="dialog" aria-modal="true">
+    <h3 id="m-title"></h3>
+    <p id="m-text"></p>
+    <input id="m-input" type="text" autocomplete="off" spellcheck="false">
+    <div class="modal-actions">
+      <button class="btn" id="m-cancel">Cancel</button>
+      <button class="btn primary" id="m-ok">OK</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="picker">
+  <div class="modal-card" role="dialog" aria-modal="true">
+    <h3>Move to…</h3>
+    <div class="picker-path" id="p-path"></div>
+    <div class="picker-list" id="p-list"></div>
+    <div class="modal-actions">
+      <button class="btn" id="p-cancel">Cancel</button>
+      <button class="btn primary" id="p-ok">Move here</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="viewer">
+  <div class="modal-card viewer-card" role="dialog" aria-modal="true">
+    <h3 id="v-title"></h3>
+    <img id="v-img" alt="" hidden>
+    <pre id="v-pre" hidden></pre>
+    <div class="modal-actions">
+      <button class="btn" id="v-download">Download</button>
+      <button class="btn primary" id="v-close">Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const ROOT = "/sd";
+let path = ROOT;
+let demo = false;
+
+/* ---------- tiny helpers ---------- */
+const fmtSize = n => {
+  if (n >= 1073741824) return (n / 1073741824).toFixed(1) + " GB";
+  if (n >= 1048576) return (n / 1048576).toFixed(1) + " MB";
+  if (n >= 1024) return (n / 1024).toFixed(1) + " KB";
+  return n + " B";
+};
+const fmtDate = t => {
+  if (!t) return "";
+  const d = new Date(t * 1000);
+  const p = x => String(x).padStart(2, "0");
+  return `${p(d.getDate())}-${p(d.getMonth()+1)}-${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+};
+const ROM_EXT = ["gb","gbc","gba","nes","fds","sms","gg","sg","md","gen","col","pce","zip","lua"];
+const IMG_EXT = ["png","jpg","jpeg","bmp","gif"];
+const TXT_EXT = ["txt","log","json","ini","cfg","md","sav"];
+const ext = n => (n.match(/\.([a-z0-9]+)$/i) || [,""])[1].toLowerCase();
+const isRom = f => !f.is_dir && ROM_EXT.includes(ext(f.name));
+const isImg = f => !f.is_dir && IMG_EXT.includes(ext(f.name));
+const isTxt = f => !f.is_dir && ["txt","log","json","ini","cfg","md"].includes(ext(f.name));
+const esc = s => s.replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+const parentOf = p => p.slice(0, p.lastIndexOf("/")) || ROOT;
+// Encode a filesystem path for use in a URL, keeping the "/" separators intact.
+// Without this, names with spaces or & # ( ) etc. break the request → failed
+// downloads and broken image previews.
+const urlPath = p => p.split("/").map(encodeURIComponent).join("/");
+
+function icon(f) {
+  if (f.is_dir) return `<svg width="20" height="20" viewBox="0 0 16 16" fill="var(--accent)"><path d="M1.5 4a1 1 0 0 1 1-1h3.6l1.4 1.5h6a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z"/></svg>`;
+  const e = ext(f.name);
+  if (ROM_EXT.includes(e)) return `<svg width="20" height="20" viewBox="0 0 16 16" fill="none"><rect x="3" y="1.5" width="10" height="13" rx="1.5" fill="var(--surface2)" stroke="var(--muted)" stroke-width="1.3"/><rect x="5" y="4" width="6" height="4.5" rx="0.5" fill="var(--screen)"/><rect x="5" y="10.5" width="3" height="1.6" fill="var(--muted)"/></svg>`;
+  if (IMG_EXT.includes(e)) return `<svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="var(--muted)" stroke-width="1.3"><rect x="2" y="3" width="12" height="10" rx="1"/><circle cx="6" cy="7" r="1.2" fill="var(--muted)" stroke="none"/><path d="M3.5 12l3-3 2 2 2.5-2.8 1.5 1.8"/></svg>`;
+  if (TXT_EXT.includes(e)) return `<svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="var(--muted)" stroke-width="1.3" stroke-linecap="round"><path d="M4 1.5h6l2.5 2.5V14.5h-8.5z" fill="var(--surface2)"/><path d="M6 7h4M6 9.5h4M6 12h2.5"/></svg>`;
+  return `<svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="var(--muted)" stroke-width="1.3"><path d="M4 1.5h6l2.5 2.5V14.5h-8.5z" fill="var(--surface2)"/></svg>`;
+}
+
+let toastTimer;
+function toast(msg) {
+  const t = $("#toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 2600);
+}
+
+/* ---------- demo backend (used when the real API is unreachable) ---------- */
+const now = Date.now() / 1000 | 0, day = 86400;
+const demoFS = {
+  "/sd": [
+    { name: "roms", is_dir: true, size: 0, mtime: now - 30*day },
+    { name: "romart", is_dir: true, size: 0, mtime: now - 30*day },
+    { name: "BlockBoy", is_dir: true, size: 0, mtime: now - 2*day },
+    { name: "music", is_dir: true, size: 0, mtime: now - 12*day },
+    { name: "crash.log", is_dir: false, size: 2467, mtime: now - 5*day },
+  ],
+  "/sd/roms": [
+    { name: "gb", is_dir: true, size: 0, mtime: now - 30*day },
+    { name: "gbc", is_dir: true, size: 0, mtime: now - 30*day },
+    { name: "nes", is_dir: true, size: 0, mtime: now - 30*day },
+    { name: "gba", is_dir: true, size: 0, mtime: now - 8*day },
+  ],
+  "/sd/roms/gb": [
+    { name: "Tobu Tobu Girl.gb", is_dir: false, size: 262144, mtime: now - 9*day },
+    { name: "Deadeus.gb", is_dir: false, size: 524288, mtime: now - 21*day },
+    { name: "uCity.gb", is_dir: false, size: 1048576, mtime: now - 3*day },
+  ],
+  "/sd/roms/gbc": [{ name: "Petris.gbc", is_dir: false, size: 1048576, mtime: now - 15*day }],
+  "/sd/roms/nes": [], "/sd/roms/gba": [], "/sd/music": [],
+  "/sd/romart": [{ name: "gb", is_dir: true, size: 0, mtime: now - 30*day }],
+  "/sd/romart/gb": [{ name: "Tobu Tobu Girl.png", is_dir: false, size: 18740, mtime: now - 9*day }],
+  "/sd/BlockBoy": [
+    { name: "config", is_dir: true, size: 0, mtime: now - day },
+    { name: "saves", is_dir: true, size: 0, mtime: now - day },
+  ],
+  "/sd/BlockBoy/config": [{ name: "global.json", is_dir: false, size: 1210, mtime: now - day }],
+  "/sd/BlockBoy/saves": [
+    { name: "gb", is_dir: true, size: 0, mtime: now - day },
+  ],
+  "/sd/BlockBoy/saves/gb": [
+    { name: "Tobu Tobu Girl.gb.sav", is_dir: false, size: 32768, mtime: now - day },
+    { name: "Deadeus.gb.state", is_dir: false, size: 189214, mtime: now - 2*day },
+  ],
+};
+function demoApi(cmd, a1, a2) {
+  const dir = p => demoFS[p] || (demoFS[p] = []);
+  const split = p => [p.slice(0, p.lastIndexOf("/")), p.slice(p.lastIndexOf("/") + 1)];
+  if (cmd === "list") return { success: true, files: dir(a1).slice() };
+  if (cmd === "stat") return {
+    success: true, battery: 87, charging: false,
+    version: "V3-N16R8-2.0", free: 24816000000, total: 31914983424,
+  };
+  if (cmd === "play") return { success: true };
+  if (cmd === "mkdir") {
+    const [d, n] = split(a1);
+    dir(d).push({ name: n, is_dir: true, size: 0, mtime: now });
+    demoFS[a1] = [];
+    return { success: true };
+  }
+  if (cmd === "delete") {
+    const [d, n] = split(a1);
+    demoFS[d] = dir(d).filter(f => f.name !== n);
+    return { success: true };
+  }
+  if (cmd === "rename") {
+    const [d, n] = split(a1), [d2, n2] = split(a2);
+    const f = dir(d).find(f => f.name === n);
+    if (f) { demoFS[d] = dir(d).filter(x => x.name !== n); dir(d2).push({ ...f, name: n2 }); }
+    return { success: true };
+  }
+  return { success: false };
+}
+
+/* ---------- API ---------- */
+async function api(cmd, arg1, arg2) {
+  if (demo) return demoApi(cmd, arg1, arg2);
+  try {
+    const r = await fetch("/api", {
+      method: "POST",
+      body: JSON.stringify({ cmd, arg1: arg1 || "", arg2: arg2 || "" }),
+    });
+    return await r.json();
+  } catch (e) {
+    if (cmd === "list" && !demo) {
+      demo = true;
+      document.body.classList.add("demo");
+      toast("No BlockBoy found — showing demo files");
+      loadStat();
+      return demoApi(cmd, arg1, arg2);
+    }
+    return { success: false };
+  }
+}
+
+/* ---------- device status ---------- */
+async function loadStat() {
+  const s = await api("stat");
+  if (!s || !s.success) return; // older firmware: keep the strip hidden
+  const bar = $("#devbar");
+  bar.classList.add("on");
+  const lvl = Math.max(0, Math.min(100, Math.round(s.battery)));
+  $("#batt").style.setProperty("--lvl", lvl + "%");
+  $("#batt").classList.toggle("low", lvl <= 20 && !s.charging);
+  $("#batt-txt").textContent = lvl + "%" + (s.charging ? " ⚡" : "");
+  $("#fw-txt").textContent = s.version || "";
+  if (s.total > 0) {
+    const used = s.total - s.free;
+    $("#space-txt").textContent = fmtSize(s.free) + " free";
+    $("#space-fill").style.setProperty("--used", Math.round(used / s.total * 100) + "%");
+  }
+}
+
+/* ---------- state: sort / search / selection ---------- */
+const SORTS = [
+  ["name",  "Name A–Z"],
+  ["-name", "Name Z–A"],
+  ["-mtime","Newest first"],
+  ["mtime", "Oldest first"],
+  ["-size", "Largest first"],
+  ["size",  "Smallest first"],
+];
+let sortMode = "name";
+let query = "";
+let selMode = false;
+let selected = new Set();
+
+function applySort(arr) {
+  const key = sortMode.replace("-", "");
+  const dir = sortMode.startsWith("-") ? -1 : 1;
+  arr.sort((a, b) => {
+    if (key === "name") return dir * a.name.localeCompare(b.name, undefined, { sensitivity: "base", numeric: true });
+    return dir * ((a[key] || 0) - (b[key] || 0)) || a.name.localeCompare(b.name);
+  });
+  arr.sort((a, b) => b.is_dir - a.is_dir);
+  return arr;
+}
+
+/* ---------- rendering ---------- */
+function renderPath() {
+  const parts = path.slice(1).split("/");
+  let acc = "", html = "";
+  parts.forEach((p, i) => {
+    acc += "/" + p;
+    const label = i === 0 ? "SD" : p;
+    if (i === parts.length - 1) html += `<span class="here">${esc(label)}</span>`;
+    else html += `<button data-nav="${esc(acc)}">${esc(label)}</button><span class="sep">/</span>`;
+  });
+  $("#pathbar").innerHTML = html;
+}
+
+let files = [];
+function visibleFiles() {
+  const q = query.trim().toLowerCase();
+  return q ? files.filter(f => f.name.toLowerCase().includes(q)) : files.slice();
+}
+
+function render() {
+  const shown = applySort(visibleFiles());
+  let html = "";
+  if (path !== ROOT && !selMode && !query) {
+    html += `<div class="row" role="listitem" tabindex="0" data-up="1">
+      <span class="fic"><svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="var(--muted)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 13V4M4 7.5L8 3.5l4 4"/><path d="M2 14.5h12" opacity="0.4"/></svg></span>
+      <span class="info">
+        <span class="name" style="color:var(--muted)">..</span>
+        <span class="meta">back to ${esc(parentOf(path) === ROOT ? "SD" : parentOf(path).split("/").pop())}</span>
+      </span>
+    </div>`;
+  }
+  shown.forEach(f => {
+    const checked = selected.has(f.name);
+    html += `<div class="row${checked ? " checked" : ""}" role="listitem" tabindex="0" data-name="${esc(f.name)}">
+      <span class="fic">${selMode ? `<span class="cbox"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 8.5l3.5 3.5 7-8"/></svg></span>` : icon(f)}</span>
+      <span class="info">
+        <span class="name">${esc(f.name)}${f.is_dir ? "/" : ""}</span>
+        <span class="meta">${f.is_dir ? "" : fmtSize(f.size) + " · "}${fmtDate(f.mtime)}</span>
+      </span>
+      ${selMode ? "" : `<button class="kebab" data-menu="${esc(f.name)}" aria-label="Actions for ${esc(f.name)}">
+        <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="3.5" r="1.5"/><circle cx="8" cy="8" r="1.5"/><circle cx="8" cy="12.5" r="1.5"/></svg>
+      </button>`}
+    </div>`;
+  });
+  if (!shown.length) {
+    html += query
+      ? `<div class="empty"><b>No matches</b>Nothing in this folder matches "${esc(query)}".</div>`
+      : `<div class="empty"><b>Empty folder</b>Upload files or create a folder here.</div>`;
+  }
+  $("#list").innerHTML = html;
+  const nd = shown.filter(f => f.is_dir).length;
+  $("#count").textContent = shown.length
+    ? `${nd} folder${nd === 1 ? "" : "s"} · ${shown.length - nd} file${shown.length - nd === 1 ? "" : "s"}`
+    : "";
+  $("#bulk-n").textContent = selected.size + " selected";
+  $("#bulkbar").classList.toggle("on", selMode);
+}
+
+async function load(p, fromHistory) {
+  const res = await api("list", p);
+  if (!res.success) { toast("Could not open folder"); return; }
+  if (!fromHistory && p !== path) history.pushState({ p }, "");
+  path = p;
+  files = res.files || [];
+  query = "";
+  $("#search").value = "";
+  $("#searchrow").classList.remove("has-q");
+  exitSelect(false);
+  renderPath();
+  render();
+}
+
+/* ---------- actions ---------- */
+function download(f) {
+  if (demo) { toast("Download is not available in the demo"); return; }
+  const a = document.createElement("a");
+  a.href = urlPath(path + "/" + f.name);
+  a.download = f.name;
+  a.click();
+}
+
+function modal({ title, text, value, okLabel, danger, onok }) {
+  $("#m-title").textContent = title;
+  $("#m-text").textContent = text || "";
+  const inp = $("#m-input");
+  inp.style.display = value === undefined ? "none" : "";
+  inp.value = value || "";
+  const ok = $("#m-ok");
+  ok.textContent = okLabel || "OK";
+  ok.classList.toggle("danger", !!danger);
+  ok.classList.toggle("primary", !danger);
+  $("#modal").classList.add("open");
+  if (value !== undefined) {
+    inp.focus();
+    const dot = inp.value.lastIndexOf(".");
+    inp.setSelectionRange(0, dot > 0 ? dot : inp.value.length);
+  } else ok.focus();
+  const close = () => { $("#modal").classList.remove("open"); ok.onclick = null; inp.onkeydown = null; };
+  $("#m-cancel").onclick = close;
+  ok.onclick = () => { const v = inp.value.trim(); close(); onok(v); };
+  inp.onkeydown = e => { if (e.key === "Enter") ok.onclick(); if (e.key === "Escape") close(); };
+}
+
+/* ---------- viewer (images & text) ---------- */
+async function view(f) {
+  const full = path + "/" + f.name;
+  $("#v-title").textContent = f.name;
+  const img = $("#v-img"), pre = $("#v-pre");
+  img.hidden = true; pre.hidden = true;
+  if (isImg(f)) {
+    if (demo) { toast("Preview is not available in the demo"); return; }
+    img.onerror = () => { $("#viewer").classList.remove("open"); toast("Could not open image"); };
+    img.src = urlPath(full); img.hidden = false;
+  } else {
+    if (demo) {
+      pre.textContent = "[demo] " + f.name + "\n\nOn the real BlockBoy the file contents\nare shown here.";
+      pre.hidden = false;
+    } else {
+      try {
+        const r = await fetch(urlPath(full));
+        let t = await r.text();
+        if (t.length > 60000) t = t.slice(0, 60000) + "\n… (truncated)";
+        pre.textContent = t; pre.hidden = false;
+      } catch (e) { toast("Could not open file"); return; }
+    }
+  }
+  $("#viewer").classList.add("open");
+  $("#v-download").onclick = () => download(f);
+  $("#v-close").onclick = () => {
+    $("#viewer").classList.remove("open");
+    img.removeAttribute("src");
+  };
+}
+
+/* ---------- folder picker (move) ---------- */
+function pickFolder(title, cb) {
+  let pp = path;
+  const render = async () => {
+    $("#p-path").textContent = pp;
+    const res = await api("list", pp);
+    const dirs = (res.files || []).filter(f => f.is_dir)
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+    let html = "";
+    if (pp !== ROOT)
+      html += `<button data-go="${esc(parentOf(pp))}"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="var(--muted)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 13V4M4 7.5L8 3.5l4 4"/></svg> ..</button>`;
+    for (const d of dirs)
+      html += `<button data-go="${esc(pp + "/" + d.name)}"><svg width="16" height="16" viewBox="0 0 16 16" fill="var(--accent)"><path d="M1.5 4a1 1 0 0 1 1-1h3.6l1.4 1.5h6a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z"/></svg> ${esc(d.name)}</button>`;
+    if (!html) html = `<div class="none">No subfolders</div>`;
+    $("#p-list").innerHTML = html;
+  };
+  $("#p-list").onclick = e => {
+    const b = e.target.closest("[data-go]");
+    if (b) { pp = b.dataset.go; render(); }
+  };
+  $("#p-cancel").onclick = () => $("#picker").classList.remove("open");
+  $("#p-ok").onclick = () => { $("#picker").classList.remove("open"); cb(pp); };
+  $("#picker").classList.add("open");
+  render();
+}
+
+async function moveFiles(names, dest) {
+  if (dest === path) { toast("Already in this folder"); return; }
+  let ok = 0;
+  for (const n of names) {
+    const r = await api("rename", path + "/" + n, dest + "/" + n);
+    if (r.success) ok++;
+  }
+  toast(ok === names.length ? `Moved ${ok} item${ok === 1 ? "" : "s"}` : `Moved ${ok}/${names.length} — some failed`);
+  load(path);
+}
+
+/* ---------- selection mode ---------- */
+function enterSelect() { selMode = true; selected.clear(); $("#btn-select").classList.add("active"); render(); }
+function exitSelect(rerender = true) {
+  selMode = false; selected.clear();
+  $("#btn-select").classList.remove("active");
+  if (rerender) render();
+  else $("#bulkbar").classList.remove("on");
+}
+
+/* ---------- item menu ---------- */
+function openMenu(name, anchor) {
+  const f = files.find(x => x.name === name);
+  if (!f) return;
+  const full = path + "/" + f.name;
+  const it = (id, label, svg, danger) =>
+    `<button class="item${danger ? " danger" : ""}" data-act="${id}">${svg}${label}</button>`;
+  const sheet = $("#sheet");
+  let items = "";
+  if (f.is_dir) items += it("open", "Open", `<svg width="17" height="17" viewBox="0 0 16 16" fill="var(--accent)"><path d="M1.5 4a1 1 0 0 1 1-1h3.6l1.4 1.5h6a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z"/></svg>`);
+  if (isRom(f)) items += it("play", "Play on BlockBoy", `<svg width="17" height="17" viewBox="0 0 16 16" fill="currentColor"><path d="M4 2.5v11l9-5.5z"/></svg>`);
+  if (isImg(f) || isTxt(f)) items += it("view", "View", `<svg width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/></svg>`);
+  if (!f.is_dir) items += it("download", "Download", `<svg width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v8M4 8l4 4 4-4M2 14h12"/></svg>`);
+  items += it("move", "Move to…", `<svg width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 4.5v8h13v-6.5H8L6.5 4.5z"/><path d="M8 8.5h4M10.5 7L12 8.5 10.5 10"/></svg>`);
+  items += it("rename", "Rename", `<svg width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 3.5l3 3L5 14H2v-3z"/><path d="M11.5 1.5l3 3"/></svg>`);
+  items += it("delete", "Delete", `<svg width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2.5 4h11M6.5 2h3M4 4l.8 10h6.4L12 4M6.5 7v4.5M9.5 7v4.5"/></svg>`, true);
+  sheet.innerHTML = `<div class="grip"></div><h4>${esc(f.name)}</h4>` + items;
+  showSheet();
+  if (matchMedia("(min-width: 640px)").matches && anchor) {
+    const r = anchor.getBoundingClientRect();
+    sheet.style.top = (r.bottom + scrollY + 4) + "px";
+    sheet.style.left = Math.max(8, Math.min(r.right + scrollX - 230, innerWidth - 242)) + "px";
+  } else {
+    sheet.style.top = ""; sheet.style.left = "";
+  }
+  sheet.onclick = async e => {
+    const act = e.target.closest("[data-act]")?.dataset.act;
+    if (!act) return;
+    closeMenu();
+    if (act === "open") load(full);
+    if (act === "download") download(f);
+    if (act === "view") view(f);
+    if (act === "move") pickFolder("Move", dest => moveFiles([f.name], dest));
+    if (act === "play") {
+      const r = await api("play", full);
+      toast(r.success ? (demo ? "▶ (demo) BlockBoy would now start " + f.name : "▶ Starting on BlockBoy…")
+                      : "Could not start the game");
+    }
+    if (act === "rename") modal({
+      title: "Rename", value: f.name, okLabel: "Rename",
+      onok: async v => {
+        if (!v || v === f.name) return;
+        const r = await api("rename", full, path + "/" + v);
+        toast(r.success ? "Renamed" : "Rename failed");
+        load(path);
+      },
+    });
+    if (act === "delete") modal({
+      title: f.is_dir ? "Delete folder?" : "Delete file?",
+      text: f.name + (f.is_dir ? " — the folder must be empty." : " will be removed from the SD card."),
+      okLabel: "Delete", danger: true,
+      onok: async () => {
+        const r = await api("delete", full);
+        toast(r.success ? "Deleted" : "Delete failed (folder not empty?)");
+        load(path);
+      },
+    });
+  };
+}
+// Any pointerdown that isn't inside the sheet closes it. Registered one tick
+// after opening so the very click that opened the menu doesn't close it again.
+function onOutsidePointer(e) {
+  if (!e.target.closest("#sheet")) closeMenu();
+}
+function showSheet() {
+  $("#scrim").classList.add("open");
+  $("#sheet").classList.add("open");
+  setTimeout(() => document.addEventListener("pointerdown", onOutsidePointer), 0);
+}
+function closeMenu() {
+  document.removeEventListener("pointerdown", onOutsidePointer);
+  $("#sheet").classList.remove("open");
+  $("#scrim").classList.remove("open");
+}
+
+/* ---------- sort menu ---------- */
+function openSortMenu(anchor) {
+  const sheet = $("#sheet");
+  sheet.innerHTML = `<div class="grip"></div><h4>Sort by</h4>` + SORTS.map(([id, label]) =>
+    `<button class="item" data-sort="${id}">${label}${sortMode === id ? `<span class="now">✓</span>` : ""}</button>`
+  ).join("");
+  showSheet();
+  if (matchMedia("(min-width: 640px)").matches && anchor) {
+    const r = anchor.getBoundingClientRect();
+    sheet.style.top = (r.bottom + scrollY + 4) + "px";
+    sheet.style.left = Math.max(8, Math.min(r.right + scrollX - 230, innerWidth - 242)) + "px";
+  } else { sheet.style.top = ""; sheet.style.left = ""; }
+  sheet.onclick = e => {
+    const s = e.target.closest("[data-sort]")?.dataset.sort;
+    if (!s) return;
+    sortMode = s;
+    closeMenu();
+    render();
+  };
+}
+
+/* ---------- uploads ---------- */
+function uploadFiles(fileList) {
+  for (const file of fileList) {
+    const el = document.createElement("div");
+    el.className = "up-item";
+    el.innerHTML = `<div class="nm"><span>${esc(file.name)}</span><em>0%</em></div>
+                    <div class="track"><div class="fill"></div></div>`;
+    $("#uploads").appendChild(el);
+    const done = ok => {
+      el.querySelector("em").textContent = ok ? "done" : "failed";
+      el.querySelector(".fill").style.background = ok ? "var(--accent)" : "var(--danger)";
+      setTimeout(() => { el.remove(); load(path); }, ok ? 900 : 3200);
+    };
+    if (demo) {
+      let p = 0;
+      const iv = setInterval(() => {
+        p = Math.min(100, p + 8 + Math.random() * 14);
+        el.querySelector(".fill").style.width = p + "%";
+        el.querySelector("em").textContent = Math.floor(p) + "%";
+        if (p >= 100) {
+          clearInterval(iv);
+          (demoFS[path] = demoFS[path] || []).push({ name: file.name, is_dir: false, size: file.size, mtime: now });
+          done(true);
+        }
+      }, 120);
+      continue;
+    }
+    const xhr = new XMLHttpRequest();
+    xhr.upload.addEventListener("progress", e => {
+      const pct = Math.floor(e.loaded / e.total * 100);
+      el.querySelector(".fill").style.width = pct + "%";
+      el.querySelector("em").textContent = pct + "%";
+    });
+    xhr.addEventListener("load", () => done(xhr.status < 400 && xhr.responseText.indexOf("ERROR") < 0));
+    xhr.addEventListener("error", () => done(false));
+    xhr.open("PUT", urlPath(path + "/" + file.name));
+    xhr.send(file);
+  }
+}
+
+/* ---------- wiring ---------- */
+$("#btn-upload").onclick = () => $("#upload").click();
+$("#upload").onchange = e => { uploadFiles(e.target.files); e.target.value = ""; };
+$("#btn-refresh").onclick = () => { load(path); loadStat(); toast("Refreshed"); };
+$("#btn-sort").onclick = e => openSortMenu(e.currentTarget);
+$("#btn-select").onclick = () => selMode ? exitSelect() : enterSelect();
+$("#btn-newfolder").onclick = () => modal({
+  title: "New folder", value: "", okLabel: "Create",
+  onok: async v => {
+    if (!v) return;
+    const r = await api("mkdir", path + "/" + v);
+    toast(r.success ? "Folder created" : "Could not create folder");
+    load(path);
+  },
+});
+$("#search").oninput = e => {
+  query = e.target.value;
+  $("#searchrow").classList.toggle("has-q", !!query);
+  render();
+};
+$("#search-clear").onclick = () => {
+  query = ""; $("#search").value = "";
+  $("#searchrow").classList.remove("has-q");
+  render(); $("#search").focus();
+};
+$("#pathbar").onclick = e => {
+  const nav = e.target.closest("[data-nav]");
+  if (nav) load(nav.dataset.nav);
+};
+
+function activateRow(row) {
+  if (row.dataset.up) { load(parentOf(path)); return; }
+  const f = files.find(x => x.name === row.dataset.name);
+  if (!f) return;
+  if (selMode) {
+    if (selected.has(f.name)) selected.delete(f.name);
+    else selected.add(f.name);
+    render();
+    return;
+  }
+  // Tapping never downloads: folders open, images/text preview, everything
+  // else opens the action menu (Play / Download / …). This avoids the phone
+  // firing an unwanted download the moment you tap a ROM.
+  if (f.is_dir) load(path + "/" + f.name);
+  else if (isImg(f) || isTxt(f)) view(f);
+  else openMenu(f.name, row.querySelector(".kebab"));
+}
+$("#list").onclick = e => {
+  const kb = e.target.closest("[data-menu]");
+  if (kb) { openMenu(kb.dataset.menu, kb); return; }
+  const row = e.target.closest(".row");
+  if (row) activateRow(row);
+};
+$("#list").onkeydown = e => {
+  if (e.key !== "Enter" && e.key !== " ") return;
+  const row = e.target.closest(".row");
+  if (!row) return;
+  e.preventDefault();
+  activateRow(row);
+};
+
+/* bulk actions */
+$("#bulk-cancel").onclick = () => exitSelect();
+$("#bulk-download").onclick = () => {
+  const items = files.filter(f => selected.has(f.name) && !f.is_dir);
+  if (!items.length) { toast("No files selected (folders can't be downloaded)"); return; }
+  if (demo) { toast("Download is not available in the demo"); return; }
+  let i = 0;
+  const next = () => {
+    if (i >= items.length) return;
+    download(items[i++]);
+    setTimeout(next, 600);
+  };
+  next();
+  toast(`Downloading ${items.length} file${items.length === 1 ? "" : "s"}…`);
+};
+$("#bulk-move").onclick = () => {
+  if (!selected.size) { toast("Nothing selected"); return; }
+  pickFolder("Move", dest => moveFiles([...selected], dest));
+};
+$("#bulk-delete").onclick = () => {
+  if (!selected.size) { toast("Nothing selected"); return; }
+  const names = [...selected];
+  modal({
+    title: `Delete ${names.length} item${names.length === 1 ? "" : "s"}?`,
+    text: "They will be removed from the SD card. Folders must be empty.",
+    okLabel: "Delete", danger: true,
+    onok: async () => {
+      let ok = 0;
+      for (const n of names) {
+        const r = await api("delete", path + "/" + n);
+        if (r.success) ok++;
+      }
+      toast(ok === names.length ? "Deleted" : `Deleted ${ok}/${names.length} — some failed`);
+      load(path);
+    },
+  });
+};
+
+// pointerdown (not click) so a tap on the backdrop dismisses reliably on touch.
+$("#scrim").addEventListener("pointerdown", closeMenu);
+$("#scrim").addEventListener("click", closeMenu);
+addEventListener("keydown", e => {
+  if (e.key === "Escape") {
+    closeMenu();
+    $("#modal").classList.remove("open");
+    $("#picker").classList.remove("open");
+    $("#viewer").classList.remove("open");
+  }
+});
+
+/* phone/browser back button walks back through visited folders */
+history.replaceState({ p: ROOT }, "");
+addEventListener("popstate", e => {
+  closeMenu();
+  $("#modal").classList.remove("open");
+  $("#picker").classList.remove("open");
+  $("#viewer").classList.remove("open");
+  load((e.state && e.state.p) || ROOT, true);
+});
+
+/* drag & drop (desktop) */
+let dragDepth = 0;
+addEventListener("dragenter", e => { e.preventDefault(); if (++dragDepth) document.body.classList.add("dragging"); });
+addEventListener("dragleave", () => { if (--dragDepth <= 0) { dragDepth = 0; document.body.classList.remove("dragging"); } });
+addEventListener("dragover", e => e.preventDefault());
+addEventListener("drop", e => {
+  e.preventDefault();
+  dragDepth = 0;
+  document.body.classList.remove("dragging");
+  if (e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files);
+});
+
+load(ROOT);
+loadStat();
+</script>

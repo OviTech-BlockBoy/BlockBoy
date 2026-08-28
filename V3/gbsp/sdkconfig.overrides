@@ -1,0 +1,6 @@
+# GBA (gbsp): no Bluetooth. The BLE stack costs ~17KB IRAM + ~14KB DRAM and
+# that does not fit next to the static GBA buffers (VRAM 96K / IWRAM 32K /
+# memory map 32K must stay in internal SRAM for emulation speed). So the BLE
+# controller works in the launcher and every other emulator, but not in GBA
+# games.
+CONFIG_BT_ENABLED=n

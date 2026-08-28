@@ -1,0 +1,21 @@
+{
+  "version": "1.1.0",
+  "model": "blockboy-v1-n4r2",
+  "layout": 1,
+  "date": "2026-08-28",
+  "notes": "First release with over-the-air updates. Bluetooth controllers, Wi-Fi network manager, clock, and a file server with a password per device.",
+  "files": [
+    {
+      "partition": "launcher",
+      "url": "https://github.com/OviTech-BlockBoy/BlockBoy/releases/download/v1.1.0/launcher.bin",
+      "sha256": "de9e24488c7940a9f358501ff3ba234bd2669d96db5a0aa12046c12547976ec5",
+      "size": 1614400
+    },
+    {
+      "partition": "retro-core",
+      "url": "https://github.com/OviTech-BlockBoy/BlockBoy/releases/download/v1.1.0/retro-core.bin",
+      "sha256": "214e6f0a1713cc156774090bd617f5b5022055db0a0de95740fd5111bcef0ea0",
+      "size": 1493088
+    }
+  ]
+}

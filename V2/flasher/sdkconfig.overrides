@@ -1,0 +1,18 @@
+# The flasher is the recovery route: the smaller and simpler, the better. It
+# also has to fit the factory partition of the 4MB V1, which has only ~1MB free.
+#
+# Anything not needed to write a file from the SD card to flash is stripped.
+# Measured saving versus the default target config: ~300KB.
+
+# Bluetooth: 191KB controller + 75KB host + coexist/phy. The flasher talks to
+# nobody.
+CONFIG_BT_ENABLED=n
+
+# WiFi: the launcher downloads, not the flasher. This one only reads from SD.
+CONFIG_ESP_WIFI_ENABLED=n
+
+# No USB audio; the flasher makes no sound.
+CONFIG_USB_HOST_ENABLED=n
+
+# Smallest build; speed is irrelevant here.
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y

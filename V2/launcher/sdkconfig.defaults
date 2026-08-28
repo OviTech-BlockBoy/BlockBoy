@@ -1,0 +1,2 @@
+# USB MSC support for SD card access via USB
+CONFIG_TINYUSB_MSC_ENABLED=y

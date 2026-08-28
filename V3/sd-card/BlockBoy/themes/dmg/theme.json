@@ -1,0 +1,46 @@
+{
+  "dialog": {
+    "__comment": "BlockBoy gnuboy GB_PALETTE_DMG (yellow-olive)",
+    "background": "0x94C0",
+    "foreground": "0x1200",
+    "border": "0x1200",
+    "header": "0x1200",
+    "scrollbar": "0x2A83",
+    "shadow": "none",
+    "item_standard": "0x1200",
+    "item_disabled": "0x2A83",
+    "item_message": "0x2A83"
+  },
+  "launcher_1": {
+    "background": "0x94C0",
+    "foreground": "0x1200",
+    "list_standard_bg": "transparent",
+    "list_standard_fg": "0x2A83",
+    "list_selected_bg": "0x5383",
+    "list_selected_fg": "0x1200"
+  },
+  "launcher_2": {
+    "background": "0x94C0",
+    "foreground": "0x1200",
+    "list_standard_bg": "transparent",
+    "list_standard_fg": "0x2A83",
+    "list_selected_bg": "0x5383",
+    "list_selected_fg": "0x1200"
+  },
+  "launcher_3": {
+    "background": "0x94C0",
+    "foreground": "0x1200",
+    "list_standard_bg": "transparent",
+    "list_standard_fg": "0x2A83",
+    "list_selected_bg": "0x1200",
+    "list_selected_fg": "0x94C0"
+  },
+  "launcher_4": {
+    "background": "0x94C0",
+    "foreground": "0x1200",
+    "list_standard_bg": "transparent",
+    "list_standard_fg": "0x2A83",
+    "list_selected_bg": "0x1200",
+    "list_selected_fg": "0x94C0"
+  }
+}

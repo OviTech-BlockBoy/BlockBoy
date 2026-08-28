@@ -129,7 +129,7 @@
         <div class="card">
             <img src="https://ovitech-2.myshopify.com/cdn/shop/files/2_-_kopie_2.png?v=1771716578&width=600" alt="OviTech" class="logo">
             <h1>BlockBoy Flasher</h1>
-            <p class="subtitle">The flasher detects your device automatically, so you can't flash the wrong version.</p>
+            <p class="subtitle">Your BlockBoy is recognised automatically, so it cannot be given the wrong firmware.</p>
 
             <div id="app">
                 <div class="channel">
@@ -164,6 +164,8 @@
                             <li>Click "Connect device" and pick the port in the popup</li>
                             <li>Your device is detected automatically</li>
                             <li>Confirm, then wait ~1-2 minutes</li>
+                            <li>Flashing a second time? Unplug the cable and plug it back in first, then connect straight away</li>
+                            <li>After this, your BlockBoy updates itself from the menu &mdash; no cable needed</li>
                         </ul>
                     </div>
                     <div class="warning-box">
@@ -210,34 +212,54 @@
         import { ESPLoader, Transport } from "https://cdn.jsdelivr.net/npm/esptool-js@0.5.4/+esm";
 
         // ============================================================
+        //  HARDWARE MARKER
+        //  Flash size tells V1 (4 MB) apart from the rest, but V2 and V3 are
+        //  both N16R8 -- identical 16 MB chips. Production burns a magic word
+        //  into eFuse BLOCK_KEY0 of every V3; an unburned block reads 0, so
+        //  every V2 identifies itself correctly without ever being touched.
+        //  EFUSE_RD_KEY0_DATA0_REG on the ESP32-S3, read straight over serial.
+        // ============================================================
+        const MARKER_REG = 0x6000709C;
+        const MARKER_V3  = 0x0B10CB03;
+
+        // ============================================================
         //  FIRMWARE CONFIG
-        //  Map each BlockBoy variant to its real flash size + image(s).
-        //  flashKB MUST match the physical chip: 4096 = V1 (N4R2), 16384 = V2 (N16R8).
-        //  To publish a new firmware, drop the .img next to this page and
-        //  update the path below. Set beta to null if there is no beta yet.
+        //  One entry per model. flashKB is the safety gate: it must match the
+        //  physical chip, and an image is never written to a device whose
+        //  flash size disagrees. To publish a new firmware, drop the .img next
+        //  to this page and update the path. Set previous to null when there
+        //  is no older version to fall back to.
         // ============================================================
         const FIRMWARE = {
-            4096: {
-                label: "BlockBoy V1 (N4R2)",
-                stable: "./blockboy_v1.0.1_0v1tech-blockboy-n4r2.img",
-                beta:   "./blockboy_v1_1.1-beta_n4r2.img"
+            V1: {
+                label: "BlockBoy V1",
+                flashKB: 4096,
+                latest:   { version: "1.1.0", img: "./blockboy_1.1.0_0v1tech-blockboy-n4r2.img" },
+                previous: { version: "1.0.1", img: "./blockboy_v1.0.1_0v1tech-blockboy-n4r2.img" }
             },
-            16384: {
-                label: "BlockBoy V2 (N16R8)",
-                stable: "./blockboy_v2.0.1_0v1tech-blockboy-n16r8.img",
-                beta:   "./blockboy_v2_1.1-beta_n16r8.img"
+            V2: {
+                label: "BlockBoy V2",
+                flashKB: 16384,
+                latest:   { version: "2.1.0", img: "./blockboy_2.1.0_0v1tech-blockboy-n16r8.img" },
+                previous: { version: "2.0.1", img: "./blockboy_v2.0.1_0v1tech-blockboy-n16r8.img" }
+            },
+            V3: {
+                label: "BlockBoy V3",
+                flashKB: 16384,
+                latest:   { version: "3.1.0", img: "./blockboy_3.1.0_0v1tech-blockboy-n16r8.img" },
+                previous: null
             }
         };
 
         // ============================================================
         //  FIRMWARE CHANNELS (the dropdown options)
-        //  These are the choices shown to the user. The actual file is
-        //  resolved per detected hardware via FIRMWARE[flashKB][id].
-        //  Add more entries here to grow the dropdown.
+        //  Deliberately not version numbers: the same choice has to make sense
+        //  for all three models, and the real file is resolved per detected
+        //  device via FIRMWARE[model][id].
         // ============================================================
         const CHANNELS = [
-            { id: "stable", label: "firmware 1.0" },
-            { id: "beta",   label: "firmware 1.1 beta" }
+            { id: "latest",   label: "Latest firmware" },
+            { id: "previous", label: "Previous version" }
         ];
 
         const connectBtn = document.getElementById("connectBtn");
@@ -322,9 +344,53 @@
         // Holds the live connection between "Connect" (detect) and "Flash now" (write).
         let pending = null;
 
-        function channelLabelFor(id) {
+        function channelLabelFor(id, variant) {
             const c = CHANNELS.find((x) => x.id === id);
-            return c ? c.label : id;
+            const base = c ? c.label : id;
+            // Only once a device is known can we say which version that is --
+            // "latest" means 1.1.0 on a V1 and 3.1.0 on a V3.
+            const entry = variant ? variant[id] : null;
+            return entry ? base + " (" + entry.version + ")" : base;
+        }
+
+        // Put the real version numbers in the dropdown as soon as we know what
+        // is plugged in, and grey out a channel this model does not have.
+        function labelChannelsFor(variant) {
+            Array.from(firmwareSelect.options).forEach((opt) => {
+                opt.textContent = channelLabelFor(opt.value, variant);
+                opt.disabled = variant ? !variant[opt.value] : false;
+            });
+        }
+
+        // ============================================================
+        //  MODEL DETECTION
+        //  Returns { key, flashKB, marker } on success, { key: null, reason }
+        //  otherwise. It never guesses: an unreadable marker on a 16 MB device
+        //  is refused rather than assumed to be a V2, because V3 firmware on
+        //  V2 hardware drives the wrong panel and leaves the owner staring at
+        //  a dark screen with no idea why.
+        // ============================================================
+        async function detectModel(esploader) {
+            const flashKB = await esploader.getFlashSize();
+            logLine("Detected flash size: " + (flashKB ? flashKB + " KB" : "unknown"));
+
+            if (flashKB === 4096) return { key: "V1", flashKB, marker: null };
+
+            if (flashKB !== 16384) {
+                return { key: null, flashKB,
+                         reason: "flash is " + (flashKB || "?") + " KB, which is neither a V1 (4 MB) nor a V2/V3 (16 MB)" };
+            }
+
+            let marker;
+            try {
+                marker = (await esploader.readReg(MARKER_REG)) >>> 0;
+            } catch (e) {
+                return { key: null, flashKB,
+                         reason: "the hardware marker could not be read (" + (e && e.message ? e.message : e) + ")" };
+            }
+
+            logLine("Hardware marker: 0x" + marker.toString(16).padStart(8, "0").toUpperCase());
+            return { key: marker === MARKER_V3 ? "V3" : "V2", flashKB, marker };
         }
         function resetMainUI() {
             connectBtn.style.display = "";
@@ -332,6 +398,10 @@
             confirmPanel.classList.remove("show");
             firmwareSelect.disabled = false;
             serialBtn.disabled = false;
+            // No device connected, so no version numbers to show: leaving the
+            // previous model's numbers up would be a lie the moment someone
+            // plugs in a different BlockBoy.
+            labelChannelsFor(null);
         }
 
         // STEP 1 — connect & detect (no writing happens here)
@@ -355,22 +425,23 @@
                 transport = conn.transport;
                 logLine("Chip: " + conn.chip);
 
-                // --- THE SAFETY GATE: detect real flash size, never flash the wrong image ---
-                const flashKB = await conn.esploader.getFlashSize();
-                logLine("Detected flash size: " + (flashKB ? flashKB + " KB" : "unknown"));
-
-                const variant = FIRMWARE[flashKB];
-                if (!variant) {
-                    setStatus("Unknown device (flash " + (flashKB || "?") + " KB). Nothing was flashed. This does not look like a BlockBoy V1 or V2.", "err");
+                // --- THE SAFETY GATE: work out which model this is, and refuse
+                //     to write anything if that cannot be established ---
+                const found = await detectModel(conn.esploader);
+                if (!found.key) {
+                    setStatus("Could not identify this device: " + found.reason + ". Nothing was flashed.", "err");
                     await safeDisconnect(transport);
                     resetMainUI();
                     return;
                 }
+                const variant = FIRMWARE[found.key];
 
-                const imgPath = variant[channel];
-                const channelLabel = channelLabelFor(channel);
+                labelChannelsFor(variant);
+                const entry = variant[channel];
+                const imgPath = entry ? entry.img : null;
+                const channelLabel = channelLabelFor(channel, variant);
                 if (!imgPath) {
-                    setStatus("No " + channelLabel + " available for " + variant.label + " yet. Nothing was flashed.", "err");
+                    setStatus("There is no " + channelLabel.toLowerCase() + " for the " + variant.label + ". Nothing was flashed.", "err");
                     await safeDisconnect(transport);
                     resetMainUI();
                     return;
@@ -483,13 +554,14 @@
                 transport = conn.transport;
                 logLine("Chip: " + conn.chip);
 
-                const flashKB = await conn.esploader.getFlashSize();
-                logLine("Detected flash size: " + (flashKB ? flashKB + " KB" : "unknown"));
-                const variant = FIRMWARE[flashKB];
-                if (!variant) { setStatus("Unknown device (flash " + (flashKB || "?") + " KB). Nothing was flashed.", "err"); return; }
-                const imgPath = variant[channel];
-                const channelLabel = channelLabelFor(channel);
-                if (!imgPath) { setStatus("No " + channelLabel + " available for " + variant.label + " yet. Nothing was flashed.", "err"); return; }
+                const found = await detectModel(conn.esploader);
+                if (!found.key) { setStatus("Could not identify this device: " + found.reason + ". Nothing was flashed.", "err"); return; }
+                const variant = FIRMWARE[found.key];
+                labelChannelsFor(variant);
+                const entry = variant[channel];
+                const imgPath = entry ? entry.img : null;
+                const channelLabel = channelLabelFor(channel, variant);
+                if (!imgPath) { setStatus("There is no " + channelLabel.toLowerCase() + " for the " + variant.label + ". Nothing was flashed.", "err"); return; }
 
                 // Flash immediately, no confirm.
                 setStatus("Recovery: flashing " + variant.label + " (" + channelLabel + "). Do not disconnect...", "info");
