@@ -48,7 +48,7 @@ See [MODELS.md](MODELS.md) for the differences between BlockBoy V1, V2 and V3.
 - SD card for ROM storage
 
 ## Updating
-Update over Wi-Fi from the device itself: **Settings > Firmware update**.
+Update over Wi-Fi from the device itself: **Options > Firmware update**.
 Every V3 ships with this firmware, so the web flasher is only needed for recovery.
 
 ## Installation

@@ -37,7 +37,7 @@ firmware meant for the other model.
 
 **V1 and V2 owners** run the [web flasher](https://blockboy.nl/pages/firmware)
 once over USB. Every version after that arrives over Wi-Fi from the menu, under
-Settings → Wi-Fi → Firmware update.
+Options > Firmware update.
 
 **V3 owners** already have the latest firmware and update from the menu. The web
 flasher is only needed if something goes wrong.
@@ -70,4 +70,4 @@ Nintendo.
 
 ## License
 
-GNU General Public License v2.0 — see [COPYING](V3/COPYING).
+GNU General Public License v2.0. See [COPYING](V3/COPYING).

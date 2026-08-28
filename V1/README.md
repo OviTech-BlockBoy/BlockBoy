@@ -37,7 +37,7 @@ See [MODELS.md](MODELS.md) for the differences between BlockBoy V1, V2 and V3.
 - External I2S DAC audio
 
 ## Updating
-Update over Wi-Fi from the device itself: **Settings > Firmware update**.
+Update over Wi-Fi from the device itself: **Options > Firmware update**.
 
 Coming from firmware 1.0? That release does not have this update system, so it
 takes one pass with the [web flasher](https://blockboy.nl/pages/firmware) over

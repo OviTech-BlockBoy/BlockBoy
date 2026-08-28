@@ -9,7 +9,7 @@ Builds are made and tested with **v5.5**; older 4.x releases will not compile.
 Patches in `tools/patches` may improve stability:
 - `sdcard-fix`: works around slow/failing SD access on some cards.
 - `panic-hook`: saved crash logs to the SD card. This one only applies to
-  ESP-IDF 4 — the hook it relies on no longer exists in IDF 5, so on 5.x it
+  ESP-IDF 4. The hook it relies on no longer exists in IDF 5, so on 5.x it
   has no effect.
 
 ### exFAT SD cards (optional)

@@ -165,7 +165,7 @@
                             <li>Your device is detected automatically</li>
                             <li>Confirm, then wait ~1-2 minutes</li>
                             <li>Flashing a second time? Unplug the cable and plug it back in first, then connect straight away</li>
-                            <li>After this, your BlockBoy updates itself from the menu &mdash; no cable needed</li>
+                            <li>After this, your BlockBoy updates itself from the menu, no cable needed</li>
                         </ul>
                     </div>
                     <div class="warning-box">
@@ -184,7 +184,7 @@
                         <button class="serial-btn" id="recoveryBtn">Recovery: detect &amp; flash now</button>
                         <button class="serial-btn" id="serialBtn">Open serial monitor</button>
                     </div>
-                    <p style="margin-top:0.6rem;">Recovery skips the confirm step and re-flashes a stuck or restarting device the moment it is caught &mdash; no need to be quick. It uses the firmware selected above and still verifies the hardware first.</p>
+                    <p style="margin-top:0.6rem;">Recovery skips the confirm step and re-flashes a stuck or restarting device the moment it is caught, so you do not need to be quick. It uses the firmware selected above and still verifies the hardware first.</p>
 
                     <div class="custom-row">
                         <input type="file" id="customFile" accept=".img,.bin">
@@ -404,7 +404,7 @@
             labelChannelsFor(null);
         }
 
-        // STEP 1 — connect & detect (no writing happens here)
+        // STEP 1: connect & detect (no writing happens here)
         connectBtn.addEventListener("click", async () => {
             const channel = firmwareSelect.value;
             connectBtn.disabled = true;
@@ -456,15 +456,15 @@
             } catch (err) {
                 console.error(err);
                 const m = (err && err.message) ? err.message : String(err);
-                if (/No port selected|cancelled/i.test(m)) setStatus("Cancelled — no device selected.", "info");
-                else setStatus("Error: " + m + " — nothing was flashed.", "err");
+                if (/No port selected|cancelled/i.test(m)) setStatus("Cancelled. No device selected.", "info");
+                else setStatus("Error: " + m + ". Nothing was flashed.", "err");
                 logLine("ERROR: " + m);
                 await safeDisconnect(transport);
                 resetMainUI();
             }
         });
 
-        // STEP 2 — user confirmed: download the image and write it
+        // STEP 2: user confirmed: download the image and write it
         confirmBtn.addEventListener("click", async () => {
             if (!pending) return;
             const p = pending;
@@ -516,7 +516,7 @@
         cancelBtn.addEventListener("click", async () => {
             const p = pending;
             pending = null;
-            setStatus("Cancelled — nothing was flashed.", "info");
+            setStatus("Cancelled. Nothing was flashed.", "info");
             if (p) await safeDisconnect(p.transport);
             resetMainUI();
         });
@@ -526,7 +526,7 @@
         }
 
         // ============================================================
-        //  ADVANCED — RECOVERY (no confirm step)
+        //  ADVANCED: RECOVERY (no confirm step)
         //  Catches a stuck / reboot-looping device and re-flashes it the
         //  instant it is caught, so you don't have to be quick. Reuses an
         //  already-granted port (usually no popup). Still verifies the
@@ -588,7 +588,7 @@
             } catch (err) {
                 console.error(err);
                 const m = (err && err.message) ? err.message : String(err);
-                if (/No port selected|cancelled/i.test(m)) setStatus("Cancelled — no device selected.", "info");
+                if (/No port selected|cancelled/i.test(m)) setStatus("Cancelled. No device selected.", "info");
                 else setStatus("Recovery error: " + m, "err");
                 logLine("ERROR: " + m);
             } finally {
@@ -600,7 +600,7 @@
         });
 
         // ============================================================
-        //  ADVANCED — CUSTOM FIRMWARE
+        //  ADVANCED: CUSTOM FIRMWARE
         //  Flash a user-provided .img. Still detects the device and refuses a
         //  file that is larger than the flash chip (the classic brick case).
         // ============================================================
@@ -661,7 +661,7 @@
             } catch (err) {
                 console.error(err);
                 const m = (err && err.message) ? err.message : String(err);
-                if (/No port selected|cancelled/i.test(m)) setStatus("Cancelled — no device selected.", "info");
+                if (/No port selected|cancelled/i.test(m)) setStatus("Cancelled. No device selected.", "info");
                 else setStatus("Error: " + m, "err");
                 logLine("ERROR: " + m);
             } finally {
@@ -700,7 +700,7 @@
                 readSerialLoop();
             } catch (err) {
                 const m = (err && err.message) ? err.message : String(err);
-                if (/No port selected|cancelled/i.test(m)) setStatus("Cancelled — no device selected.", "info");
+                if (/No port selected|cancelled/i.test(m)) setStatus("Cancelled. No device selected.", "info");
                 else setStatus("Serial error: " + m, "err");
                 await stopSerial();
             }
