@@ -4,10 +4,6 @@ Multi-system retro game emulator firmware for the BlockBoy V3 handheld (ESP32-S3
 
 Based on [Retro-Go](https://github.com/ducalex/retro-go) by ducalex.
 
-> **Game Boy Advance:** a Thumb/ARM JIT recompiler, rendering moved to the second core,
-> a native MP2k audio mixer and a faster path for streaming the ROM off the SD card lift
-> Pokémon Emerald from around 30 fps on the plain interpreter to close to a steady 60.
-
 See [MODELS.md](MODELS.md) for the differences between BlockBoy V1, V2 and V3.
 
 ## Supported systems
@@ -124,7 +120,9 @@ ducalex, with the following changes:
 - Boot animation options (blocks, scroll, off)
 - Battery warning threshold and calibration
 - Game Boy Advance emulator tuned for the Pokemon titles: a Thumb/ARM JIT
-  recompiler, dual-core render offload and a native MP2k audio mixer
+  recompiler, dual-core render offload, a native MP2k audio mixer and a faster
+  path for streaming the ROM off the SD card, taking Pokemon Emerald from around
+  30 fps on the plain interpreter to close to a steady 60
 - ST7789 IPS panel on an 80 MHz display bus, with panel tuning options
 - Two rotary wheels for brightness and volume, replacing the side buttons
 - Battery-backed real-time clock and physical status LEDs
