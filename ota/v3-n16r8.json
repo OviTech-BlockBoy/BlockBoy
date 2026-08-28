@@ -3,36 +3,36 @@
   "model": "blockboy-v3-n16r8",
   "layout": 1,
   "date": "2026-08-28",
-  "notes": "First release with over-the-air updates. Bluetooth controllers, Wi-Fi network manager, clock, and a file server with a password per device.",
+  "notes": "",
   "files": [
     {
       "partition": "launcher",
       "url": "https://github.com/OviTech-BlockBoy/BlockBoy/releases/download/v3.1.0/launcher.bin",
-      "sha256": "32fd61ecc08f64d96b214ccd789397199e427ee57fe9704d83964b34b747aa24",
+      "sha256": "eb77f6416e6ada10118a9116bb96e426e51c60415e440f0051336f30055571e4",
       "size": 1703568
     },
     {
       "partition": "retro-core",
       "url": "https://github.com/OviTech-BlockBoy/BlockBoy/releases/download/v3.1.0/retro-core.bin",
-      "sha256": "161e98d7d12d99e3a21029c2eb8afa775d7048fa1faf9cdd7d6923d9404faa33",
+      "sha256": "ce880fe37855ef5ca4f41b04f5871fb45dd2d171a071c1c2825f197e2dc0e3d2",
       "size": 1626672
     },
     {
       "partition": "prboom-go",
       "url": "https://github.com/OviTech-BlockBoy/BlockBoy/releases/download/v3.1.0/prboom-go.bin",
-      "sha256": "1388243b6ed34fcb8a5cf8f6e8e8e25d2b12e39fe16da7cbbd020e1ddef77d5e",
+      "sha256": "47eaae62333ee65dab492a7f51e6539fa79d7d34426c410f9a35a581a2c451d1",
       "size": 1378880
     },
     {
       "partition": "gwenesis",
       "url": "https://github.com/OviTech-BlockBoy/BlockBoy/releases/download/v3.1.0/gwenesis.bin",
-      "sha256": "5ec4ad1973d02df1a65a8a09611ed77656807a8e60c2181103c1812fc0b590ca",
+      "sha256": "2bdfd41c454a9c056d802195f260b5fa542dbd2c62d95c60bb0b65c36a0d1fa7",
       "size": 1528768
     },
     {
       "partition": "gbsp",
       "url": "https://github.com/OviTech-BlockBoy/BlockBoy/releases/download/v3.1.0/gbsp.bin",
-      "sha256": "8b691d012555cb098ba5c3690318245467359f588c2f4225477d258486874255",
+      "sha256": "ec834d454ae8f7eb576149d2c085b1c87663bc99bc03e797022de13b25b3d3bd",
       "size": 871760
     }
   ]
