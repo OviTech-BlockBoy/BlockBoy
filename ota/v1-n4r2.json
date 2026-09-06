@@ -8,13 +8,13 @@
     {
       "partition": "launcher",
       "url": "https://github.com/OviTech-BlockBoy/BlockBoy/releases/download/v1.1.1/launcher.bin",
-      "sha256": "c98c4e4b81dfdf1f4906ea7639066ac8da37432eaf963ea97326cb60b0884778",
+      "sha256": "79d7eb7a03e8f088b24b69f49cf77766758345c44ef9f0151047890d30f1fb51",
       "size": 1614400
     },
     {
       "partition": "retro-core",
       "url": "https://github.com/OviTech-BlockBoy/BlockBoy/releases/download/v1.1.1/retro-core.bin",
-      "sha256": "33cad307eba563915f4212bfe6b8a20805973ef9ee81ff74086f7cfc95a696d2",
+      "sha256": "cd2ecc03a360f95d8e97339de25b73fc2238e6dd663ba484e656c8b3117188a9",
       "size": 1493072
     }
   ]
