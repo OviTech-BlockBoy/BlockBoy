@@ -234,33 +234,59 @@
             V1: {
                 label: "BlockBoy V1",
                 flashKB: 4096,
-                latest:   { version: "1.1.0", img: "./blockboy_1.1.0_0v1tech-blockboy-n4r2.img" },
-                previous: { version: "1.0.1", img: "./blockboy_v1.0.1_0v1tech-blockboy-n4r2.img" }
+                versions: [
+                    { version: "1.1.1", img: "./blockboy_1.1.1_0v1tech-blockboy-n4r2.img" },
+                    { version: "1.1.0", img: "./blockboy_1.1.0_0v1tech-blockboy-n4r2.img" },
+                    { version: "1.0.1", img: "./blockboy_v1.0.1_0v1tech-blockboy-n4r2.img", note: "no over-the-air updates" }
+                ]
             },
             V2: {
                 label: "BlockBoy V2",
                 flashKB: 16384,
-                latest:   { version: "2.1.0", img: "./blockboy_2.1.0_0v1tech-blockboy-n16r8.img" },
-                previous: { version: "2.0.1", img: "./blockboy_v2.0.1_0v1tech-blockboy-n16r8.img" }
+                versions: [
+                    { version: "2.1.1", img: "./blockboy_2.1.1_0v1tech-blockboy-n16r8.img" },
+                    { version: "2.1.0", img: "./blockboy_2.1.0_0v1tech-blockboy-n16r8.img" },
+                    { version: "2.0.1", img: "./blockboy_v2.0.1_0v1tech-blockboy-n16r8.img", note: "no over-the-air updates" }
+                ]
             },
             V3: {
                 label: "BlockBoy V3",
                 flashKB: 16384,
-                latest:   { version: "3.1.0", img: "./blockboy_3.1.0_0v1tech-blockboy-n16r8.img" },
-                previous: null
+                versions: [
+                    { version: "3.1.1", img: "./blockboy_3.1.1_0v1tech-blockboy-n16r8.img" }
+                ]
             }
         };
 
         // ============================================================
-        //  FIRMWARE CHANNELS (the dropdown options)
-        //  Deliberately not version numbers: the same choice has to make sense
-        //  for all three models, and the real file is resolved per detected
-        //  device via FIRMWARE[model][id].
+        //  THE FIRMWARE DROPDOWN
+        //  The model is only known after connecting, so the first entry is
+        //  "newest for my device": it resolves once detection has run and is
+        //  the right answer for everybody. Every individual version is listed
+        //  underneath, grouped per model, for anyone who wants a specific one.
+        //
+        //  Picking a version for the wrong model is not prevented in the list
+        //  -- the device is not plugged in yet when you choose -- but it is
+        //  refused after detection, before a single byte is written.
         // ============================================================
-        const CHANNELS = [
-            { id: "latest",   label: "Latest firmware" },
-            { id: "previous", label: "Previous version" }
-        ];
+        const AUTO = "auto";
+
+        function versionsOf(key) {
+            return (FIRMWARE[key] && FIRMWARE[key].versions) || [];
+        }
+
+        // "V2:2.1.0" -- the model is part of the value so the choice can be
+        // checked against the device that actually turns up.
+        function optionValue(key, entry) {
+            return key + ":" + entry.version;
+        }
+
+        function optionLabel(entry, isNewest) {
+            let s = entry.version;
+            if (isNewest) s += " (newest)";
+            if (entry.note) s += " - " + entry.note;
+            return s;
+        }
 
         const connectBtn = document.getElementById("connectBtn");
         const confirmPanel = document.getElementById("confirmPanel");
@@ -278,14 +304,30 @@
             document.getElementById("unsupported").style.display = "block";
         }
 
-        // Populate the firmware dropdown from CHANNELS
+        // Populate the firmware dropdown: the automatic choice first, then every
+        // version grouped per model.
         const firmwareSelect = document.getElementById("firmwareSelect");
-        CHANNELS.forEach((c) => {
-            const opt = document.createElement("option");
-            opt.value = c.id;
-            opt.textContent = c.label;
-            firmwareSelect.appendChild(opt);
-        });
+        (function buildFirmwareOptions() {
+            const auto = document.createElement("option");
+            auto.value = AUTO;
+            auto.textContent = "Newest for my device (recommended)";
+            firmwareSelect.appendChild(auto);
+
+            Object.keys(FIRMWARE).forEach((key) => {
+                const list = versionsOf(key);
+                if (!list.length) return;
+                const group = document.createElement("optgroup");
+                group.label = FIRMWARE[key].label;
+                list.forEach((entry, i) => {
+                    const opt = document.createElement("option");
+                    opt.value = optionValue(key, entry);
+                    opt.textContent = optionLabel(entry, i === 0);
+                    group.appendChild(opt);
+                });
+                firmwareSelect.appendChild(group);
+            });
+            firmwareSelect.value = AUTO;
+        })();
 
         function setStatus(msg, kind) {
             statusEl.textContent = msg;
@@ -344,21 +386,40 @@
         // Holds the live connection between "Connect" (detect) and "Flash now" (write).
         let pending = null;
 
-        function channelLabelFor(id, variant) {
-            const c = CHANNELS.find((x) => x.id === id);
-            const base = c ? c.label : id;
-            // Only once a device is known can we say which version that is --
-            // "latest" means 1.1.0 on a V1 and 3.1.0 on a V3.
-            const entry = variant ? variant[id] : null;
-            return entry ? base + " (" + entry.version + ")" : base;
+        // Turns what the dropdown says into the file to write, for the model
+        // that was actually detected. Returns { entry, label } on success, or
+        // { error } with something the owner can act on.
+        function resolveFirmware(value, key) {
+            const variant = FIRMWARE[key];
+            const list = versionsOf(key);
+
+            if (value === AUTO) {
+                if (!list.length) return { error: "There is no firmware listed for the " + variant.label + "." };
+                return { entry: list[0], label: "version " + list[0].version + " (newest)" };
+            }
+
+            const sep = value.indexOf(":");
+            const wantKey = value.slice(0, sep);
+            const wantVer = value.slice(sep + 1);
+
+            // The check that matters: a V3 image on V2 hardware drives the wrong
+            // panel and leaves the owner staring at a dark screen.
+            if (wantKey !== key) {
+                return { error: "You picked firmware " + wantVer + " for the " +
+                                (FIRMWARE[wantKey] ? FIRMWARE[wantKey].label : wantKey) +
+                                ", but a " + variant.label + " is connected." };
+            }
+            const entry = list.find((e) => e.version === wantVer);
+            if (!entry) return { error: "Firmware " + wantVer + " is not available for the " + variant.label + "." };
+            return { entry: entry, label: "version " + entry.version };
         }
 
-        // Put the real version numbers in the dropdown as soon as we know what
-        // is plugged in, and grey out a channel this model does not have.
-        function labelChannelsFor(variant) {
-            Array.from(firmwareSelect.options).forEach((opt) => {
-                opt.textContent = channelLabelFor(opt.value, variant);
-                opt.disabled = variant ? !variant[opt.value] : false;
+        // Grey out the versions that belong to a different model, so the list
+        // reflects what is plugged in the moment it is known.
+        function markOptionsFor(key) {
+            Array.from(firmwareSelect.querySelectorAll("option")).forEach((opt) => {
+                if (opt.value === AUTO) { opt.disabled = false; return; }
+                opt.disabled = key ? opt.value.slice(0, opt.value.indexOf(":")) !== key : false;
             });
         }
 
@@ -398,15 +459,13 @@
             confirmPanel.classList.remove("show");
             firmwareSelect.disabled = false;
             serialBtn.disabled = false;
-            // No device connected, so no version numbers to show: leaving the
-            // previous model's numbers up would be a lie the moment someone
-            // plugs in a different BlockBoy.
-            labelChannelsFor(null);
+            // Nothing is connected, so every version is selectable again.
+            markOptionsFor(null);
         }
 
         // STEP 1: connect & detect (no writing happens here)
         connectBtn.addEventListener("click", async () => {
-            const channel = firmwareSelect.value;
+            const choice = firmwareSelect.value;
             connectBtn.disabled = true;
             firmwareSelect.disabled = true;
             serialBtn.disabled = true;
@@ -436,19 +495,19 @@
                 }
                 const variant = FIRMWARE[found.key];
 
-                labelChannelsFor(variant);
-                const entry = variant[channel];
-                const imgPath = entry ? entry.img : null;
-                const channelLabel = channelLabelFor(channel, variant);
-                if (!imgPath) {
-                    setStatus("There is no " + channelLabel.toLowerCase() + " for the " + variant.label + ". Nothing was flashed.", "err");
+                markOptionsFor(found.key);
+                const picked = resolveFirmware(choice, found.key);
+                if (picked.error) {
+                    setStatus(picked.error + " Nothing was flashed.", "err");
                     await safeDisconnect(transport);
                     resetMainUI();
                     return;
                 }
+                const imgPath = picked.entry.img;
+                const channelLabel = picked.label;
 
                 // Hold the connection open and ask for confirmation before writing.
-                pending = { transport, esploader: conn.esploader, variant, channel, channelLabel, imgPath };
+                pending = { transport, esploader: conn.esploader, variant, channelLabel, imgPath };
                 confirmText.textContent = "Detected " + variant.label + ". Ready to flash: " + channelLabel + ".";
                 connectBtn.style.display = "none";
                 confirmPanel.classList.add("show");
@@ -535,7 +594,7 @@
         const recoveryBtn = document.getElementById("recoveryBtn");
 
         recoveryBtn.addEventListener("click", async () => {
-            const channel = firmwareSelect.value;
+            const choice = firmwareSelect.value;
             recoveryBtn.disabled = true;
             connectBtn.disabled = true;
             serialBtn.disabled = true;
@@ -557,11 +616,11 @@
                 const found = await detectModel(conn.esploader);
                 if (!found.key) { setStatus("Could not identify this device: " + found.reason + ". Nothing was flashed.", "err"); return; }
                 const variant = FIRMWARE[found.key];
-                labelChannelsFor(variant);
-                const entry = variant[channel];
-                const imgPath = entry ? entry.img : null;
-                const channelLabel = channelLabelFor(channel, variant);
-                if (!imgPath) { setStatus("There is no " + channelLabel.toLowerCase() + " for the " + variant.label + ". Nothing was flashed.", "err"); return; }
+                markOptionsFor(found.key);
+                const picked = resolveFirmware(choice, found.key);
+                if (picked.error) { setStatus(picked.error + " Nothing was flashed.", "err"); return; }
+                const imgPath = picked.entry.img;
+                const channelLabel = picked.label;
 
                 // Flash immediately, no confirm.
                 setStatus("Recovery: flashing " + variant.label + " (" + channelLabel + "). Do not disconnect...", "info");

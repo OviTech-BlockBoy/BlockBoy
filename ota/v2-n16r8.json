@@ -1,38 +1,38 @@
 {
-  "version": "2.1.0",
+  "version": "2.1.1",
   "model": "blockboy-v2-n16r8",
   "layout": 1,
-  "date": "2026-08-28",
-  "notes": "",
+  "date": "2026-09-06",
+  "notes": "Maintenance release: all log messages are now in English. No functional changes.",
   "files": [
     {
       "partition": "launcher",
-      "url": "https://github.com/OviTech-BlockBoy/BlockBoy/releases/download/v2.1.0/launcher.bin?b=2",
-      "sha256": "e8df7d3b6ddf4cd2078436a31177709453a9eec89bb33d680ef64cf309a22792",
+      "url": "https://github.com/OviTech-BlockBoy/BlockBoy/releases/download/v2.1.1/launcher.bin",
+      "sha256": "0719e5f3ad87b2eb505189d5bdc2c426edca3ca402f97b5bcaa7a36d838224f0",
       "size": 1671712
     },
     {
       "partition": "retro-core",
-      "url": "https://github.com/OviTech-BlockBoy/BlockBoy/releases/download/v2.1.0/retro-core.bin?b=2",
-      "sha256": "1345fe66e880c12049a09dbf342aaaaff06d906fd647a7d6ba7793e7f3004c57",
+      "url": "https://github.com/OviTech-BlockBoy/BlockBoy/releases/download/v2.1.1/retro-core.bin",
+      "sha256": "bcee85899b67aa2b5ba8a07f3029c26a980f3d7195978905e66dae9371e006a1",
       "size": 1606704
     },
     {
       "partition": "prboom-go",
-      "url": "https://github.com/OviTech-BlockBoy/BlockBoy/releases/download/v2.1.0/prboom-go.bin?b=2",
-      "sha256": "0d3553b5456749c64057ec6ba76284c0b952d636a4fd941b1cdda78ab6dc265f",
+      "url": "https://github.com/OviTech-BlockBoy/BlockBoy/releases/download/v2.1.1/prboom-go.bin",
+      "sha256": "c9454b910d9dbb2c5fb0ee13f255d8c026649bbdb6353ca01d469c0eb130e12c",
       "size": 1358560
     },
     {
       "partition": "gwenesis",
-      "url": "https://github.com/OviTech-BlockBoy/BlockBoy/releases/download/v2.1.0/gwenesis.bin?b=2",
-      "sha256": "b5daaf3d0c090ca1b586ffc38624915bf1b5861277e884278cea7a02ae156589",
+      "url": "https://github.com/OviTech-BlockBoy/BlockBoy/releases/download/v2.1.1/gwenesis.bin",
+      "sha256": "fd1716f84e755ced6cdc88a2156878a71fe58ea60c09fc815432ed73887143cc",
       "size": 1508880
     },
     {
       "partition": "gbsp",
-      "url": "https://github.com/OviTech-BlockBoy/BlockBoy/releases/download/v2.1.0/gbsp.bin?b=2",
-      "sha256": "cb2b7e9eb9aa4bbfb2daf9476e12203a051b461e2e0aff008696c642d357e363",
+      "url": "https://github.com/OviTech-BlockBoy/BlockBoy/releases/download/v2.1.1/gbsp.bin",
+      "sha256": "40317e142e9e1caebb34fa256f78ff697a9424b3cf5ff7be872ab775fe04cf7a",
       "size": 851920
     }
   ]

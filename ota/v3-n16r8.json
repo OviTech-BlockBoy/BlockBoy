@@ -1,39 +1,39 @@
 {
-  "version": "3.1.0",
+  "version": "3.1.1",
   "model": "blockboy-v3-n16r8",
   "layout": 1,
-  "date": "2026-08-28",
-  "notes": "",
+  "date": "2026-09-06",
+  "notes": "Magnet cartridges: the console now calibrates itself against its own magnetism, and a magnet turned over counts as a separate cartridge. Screen position moved into Settings. All log messages are now in English.",
   "files": [
     {
       "partition": "launcher",
-      "url": "https://github.com/OviTech-BlockBoy/BlockBoy/releases/download/v3.1.0/launcher.bin?b=2",
-      "sha256": "eb77f6416e6ada10118a9116bb96e426e51c60415e440f0051336f30055571e4",
-      "size": 1703568
+      "url": "https://github.com/OviTech-BlockBoy/BlockBoy/releases/download/v3.1.1/launcher.bin",
+      "sha256": "b1a4167920a4a7b74baa5cfe447804a7a6aaf78f926afc054c53b6539fe958e2",
+      "size": 1717520
     },
     {
       "partition": "retro-core",
-      "url": "https://github.com/OviTech-BlockBoy/BlockBoy/releases/download/v3.1.0/retro-core.bin?b=2",
-      "sha256": "ce880fe37855ef5ca4f41b04f5871fb45dd2d171a071c1c2825f197e2dc0e3d2",
-      "size": 1626672
+      "url": "https://github.com/OviTech-BlockBoy/BlockBoy/releases/download/v3.1.1/retro-core.bin",
+      "sha256": "b80fb2dacbe40803e23ab751a12cdadf1d4f2b17be5868d03d483dc9c4855b1b",
+      "size": 1634608
     },
     {
       "partition": "prboom-go",
-      "url": "https://github.com/OviTech-BlockBoy/BlockBoy/releases/download/v3.1.0/prboom-go.bin?b=2",
-      "sha256": "47eaae62333ee65dab492a7f51e6539fa79d7d34426c410f9a35a581a2c451d1",
-      "size": 1378880
+      "url": "https://github.com/OviTech-BlockBoy/BlockBoy/releases/download/v3.1.1/prboom-go.bin",
+      "sha256": "2d805bffc74c9b651fb6b49dd089b11bbf65b419c80fc25d936c64d934267157",
+      "size": 1386656
     },
     {
       "partition": "gwenesis",
-      "url": "https://github.com/OviTech-BlockBoy/BlockBoy/releases/download/v3.1.0/gwenesis.bin?b=2",
-      "sha256": "2bdfd41c454a9c056d802195f260b5fa542dbd2c62d95c60bb0b65c36a0d1fa7",
-      "size": 1528768
+      "url": "https://github.com/OviTech-BlockBoy/BlockBoy/releases/download/v3.1.1/gwenesis.bin",
+      "sha256": "32086e6c42bf6e165787014c80fb719290dc12f69ff9bf0089daf39341debb4d",
+      "size": 1536480
     },
     {
       "partition": "gbsp",
-      "url": "https://github.com/OviTech-BlockBoy/BlockBoy/releases/download/v3.1.0/gbsp.bin?b=2",
-      "sha256": "ec834d454ae8f7eb576149d2c085b1c87663bc99bc03e797022de13b25b3d3bd",
-      "size": 871760
+      "url": "https://github.com/OviTech-BlockBoy/BlockBoy/releases/download/v3.1.1/gbsp.bin",
+      "sha256": "7848c443e03a0fa40d2306faa60d404532fd09b8f31fb93fed68c47a34ab1930",
+      "size": 879648
     }
   ]
 }
