@@ -1,21 +1,21 @@
 {
-  "version": "1.1.1",
+  "version": "1.1.2",
   "model": "blockboy-v1-n4r2",
   "layout": 1,
-  "date": "2026-09-06",
-  "notes": "Maintenance release: all log messages are now in English. No functional changes.",
+  "date": "2026-10-11",
+  "notes": "- USB mode bug fix",
   "files": [
     {
       "partition": "launcher",
-      "url": "https://github.com/OviTech-BlockBoy/BlockBoy/releases/download/v1.1.1/launcher.bin",
-      "sha256": "79d7eb7a03e8f088b24b69f49cf77766758345c44ef9f0151047890d30f1fb51",
-      "size": 1614400
+      "url": "https://github.com/OviTech-BlockBoy/BlockBoy/releases/download/v1.1.2/launcher.bin",
+      "size": 1642496,
+      "sha256": "fca756bcc0a0d06e35a2bc4ecd4c0d04118aae85ffcf05a7cc96391f67b95deb"
     },
     {
       "partition": "retro-core",
-      "url": "https://github.com/OviTech-BlockBoy/BlockBoy/releases/download/v1.1.1/retro-core.bin",
-      "sha256": "cd2ecc03a360f95d8e97339de25b73fc2238e6dd663ba484e656c8b3117188a9",
-      "size": 1493072
+      "url": "https://github.com/OviTech-BlockBoy/BlockBoy/releases/download/v1.1.2/retro-core.bin",
+      "size": 1511424,
+      "sha256": "acd8faf84e6859384dbb91b6860d7c98542e2d7d323f4fb121bbab2f9c3fd47e"
     }
   ]
 }
