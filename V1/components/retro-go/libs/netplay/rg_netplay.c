@@ -60,9 +60,10 @@ static volatile bool     serial_broken      = false;
 static uint8_t           link_rx_buf[LINK_FRAME_LEN];
 static unsigned          link_rx_have       = 0;
 
-// Tail of a frame that did not go through in one go. It is completed on the
-// next send, so the partner stays on a frame boundary.
-static uint8_t           link_tx_buf[LINK_FRAME_LEN];
+// Pending bytes, including complete frames when TCP temporarily cannot write.
+// Both send and receive polling flush this queue, even while waiting for a reply.
+#define LINK_TX_CAPACITY (64 * LINK_FRAME_LEN)
+static uint8_t           link_tx_buf[LINK_TX_CAPACITY];
 static int               link_tx_left       = 0;
 
 // ─── State ────────────────────────────────────────────────────────────────────
@@ -86,7 +87,7 @@ static int tcp_listen_sock = -1;
 static int serial_sock     = -1;
 
 
-// ─── Interne hulpfuncties ─────────────────────────────────────────────────────
+// ─── Internal helpers ─────────────────────────────────────────────────────────
 
 static void set_status(netplay_status_t s)
 {
@@ -116,7 +117,7 @@ static void send_ctrl_packet(uint32_t dest_ip, uint8_t cmd, uint8_t arg,
     };
     size_t len = sizeof(pkt) - sizeof(pkt.data) + data_len;
     if (sendto(ctrl_tx_sock, &pkt, len, 0, (struct sockaddr *)&addr, sizeof addr) <= 0)
-        RG_LOGE("netplay: sendto() mislukt: %d\n", errno);
+        RG_LOGE("netplay: sendto() failed: %d\n", errno);
 }
 
 // Atomic close: prevents a double close of the same fd from two cores.
@@ -147,7 +148,7 @@ static void network_cleanup(void)
 static void setup_local_player(esp_netif_ip_info_t *ip)
 {
     int pid = (int)esp_ip4_addr4_16(&ip->ip) - 1;
-    if (pid < 0) pid = 0;
+    if (pid < 0 || pid >= MAX_PLAYERS) pid = 0;
 
     uint32_t game_id = 5381;
     const char *p = rg_system_get_app()->romPath;
@@ -177,14 +178,14 @@ static int create_ctrl_sockets(void)
     setsockopt(ctrl_tx_sock, SOL_SOCKET, SO_BROADCAST, &bc, sizeof bc);
 
     if (bind(ctrl_rx_sock, (struct sockaddr *)&rx, sizeof rx) < 0) {
-        RG_LOGE("netplay: UDP bind mislukt: %d\n", errno);
+        RG_LOGE("netplay: UDP bind failed: %d\n", errno);
         return -1;
     }
     return 0;
 }
 
 
-// ─── Netwerk setup ────────────────────────────────────────────────────────────
+// ─── Network setup ────────────────────────────────────────────────────────────
 
 static void setup_serial_sock_opts(int fd)
 {
@@ -226,7 +227,7 @@ static void network_setup_host(void)
         setsockopt(tcp_listen_sock, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof reuse);
         bind(tcp_listen_sock, (struct sockaddr *)&sa, sizeof sa);
         listen(tcp_listen_sock, 1);
-        RG_LOGI("netplay: TCP serial luistert op poort %d\n", WIFI_SERIAL_PORT);
+        RG_LOGI("netplay: TCP serial listening on port %d\n", WIFI_SERIAL_PORT);
     }
 
     set_status(NETPLAY_STATUS_LISTENING);
@@ -308,10 +309,12 @@ static void event_handler(void *arg, esp_event_base_t base, int32_t id, void *da
 }
 
 
-// ─── Pakket verwerking ────────────────────────────────────────────────────────
+// ─── Packet handling ──────────────────────────────────────────────────────────
 
 static void handle_packet(const netplay_packet_t *pkt, int len)
 {
+    if (!local_player || len < (int)(sizeof(*pkt) - sizeof(pkt->data)))
+        return;
     int expected = (int)(sizeof(*pkt) - sizeof(pkt->data)) + pkt->data_len;
     if (expected != len || pkt->player_id >= MAX_PLAYERS || pkt->player_id == local_player->id)
         return;
@@ -319,20 +322,26 @@ static void handle_packet(const netplay_packet_t *pkt, int len)
     netplay_player_t *from = &players[pkt->player_id];
     from->last_contact = (uint32_t)rg_system_timer();
 
+    // data_len is only checked against the datagram length above, which bounds
+    // it to sizeof(pkt->data) = 128. sync_data is 16 bytes, so the sync cases
+    // below have to bound it again or a crafted packet writes 112 bytes past
+    // the field, straight through the rest of players[]. Rejected rather than
+    // truncated: a sync payload of the wrong size is not a sync payload.
+    bool sync_len_ok = pkt->data_len <= sizeof(from->sync_data);
+
     switch (pkt->cmd)
     {
         case NETPLAY_PACKET_INFO:
             if (pkt->data_len != sizeof(netplay_player_t)) break;
+            if (pkt->data[0] != NETPLAY_VERSION) {
+                RG_LOGE("netplay: protocol version mismatch\n");
+                break;
+            }
             memcpy(from, pkt->data, sizeof(netplay_player_t));
             remote_player = from;
 
             RG_LOGI("netplay: Remote player %d game_id=%08"PRIx32"\n",
                     from->id, from->game_id);
-
-            if (from->version != NETPLAY_VERSION) {
-                RG_LOGE("netplay: Protocol versie mismatch\n");
-                break;
-            }
 
             if (netplay_mode == NETPLAY_MODE_HOST) {
                 send_ctrl_packet(from->ip_addr, NETPLAY_PACKET_READY, 0, NULL, 0);
@@ -345,15 +354,19 @@ static void handle_packet(const netplay_packet_t *pkt, int len)
             break;
 
         case NETPLAY_PACKET_READY:
-            set_status(NETPLAY_STATUS_CONNECTED);
+            if (netplay_mode == NETPLAY_MODE_GUEST && remote_player == from &&
+                serial_sock >= 0 && pkt->data_len == 0)
+                set_status(NETPLAY_STATUS_CONNECTED);
             break;
 
         case NETPLAY_PACKET_SYNC_REQ:
+            if (!sync_len_ok) break;
             memcpy(from->sync_data, pkt->data, pkt->data_len);
             xSemaphoreGive(netplay_sync);
             break;
 
         case NETPLAY_PACKET_SYNC_ACK:
+            if (!sync_len_ok) break;
             memcpy(from->sync_data, pkt->data, pkt->data_len);
             if (remote_player)
                 send_ctrl_packet(remote_player->ip_addr, NETPLAY_PACKET_SYNC_DONE, pkt->arg, NULL, 0);
@@ -365,12 +378,12 @@ static void handle_packet(const netplay_packet_t *pkt, int len)
             break;
 
         default:
-            RG_LOGE("netplay: Onbekend pakket cmd=0x%02x\n", pkt->cmd);
+            RG_LOGE("netplay: unknown packet cmd=0x%02x\n", pkt->cmd);
     }
 }
 
 
-// ─── Hoofd-task ───────────────────────────────────────────────────────────────
+// ─── Main task ────────────────────────────────────────────────────────────────
 
 static void netplay_task(void *arg)
 {
@@ -391,7 +404,7 @@ static void netplay_task(void *arg)
         if (ev & EV_STA_DISCN) {
             wifi_events &= ~EV_STA_DISCN;
             if (sta_retries < STA_RETRY_MAX) {
-                RG_LOGI("netplay: STA herverbinding %d/%d\n", ++sta_retries, STA_RETRY_MAX);
+                RG_LOGI("netplay: STA reconnect %d/%d\n", ++sta_retries, STA_RETRY_MAX);
                 esp_wifi_connect();
             } else {
                 set_status(NETPLAY_STATUS_DISCONNECTED);
@@ -428,26 +441,26 @@ static void netplay_task(void *arg)
                 handshake_retry_ts = now;
                 if (netplay_mode == NETPLAY_MODE_HOST) {
                     if (remote_player == NULL && ap_guest_ip) {
-                        RG_LOGI("netplay: retry INFO → gast\n");
+                        RG_LOGI("netplay: retry INFO -> guest\n");
                         send_ctrl_packet(ap_guest_ip, NETPLAY_PACKET_INFO, 0,
                                          local_player, sizeof(netplay_player_t));
                     } else if (remote_player != NULL) {
-                        RG_LOGI("netplay: retry READY → gast\n");
+                        RG_LOGI("netplay: retry READY -> guest\n");
                         send_ctrl_packet(remote_player->ip_addr, NETPLAY_PACKET_READY,
                                          0, NULL, 0);
                     }
                 } else if (netplay_mode == NETPLAY_MODE_GUEST && remote_player != NULL) {
-                    RG_LOGI("netplay: retry INFO → host\n");
+                    RG_LOGI("netplay: retry INFO -> host\n");
                     send_ctrl_packet(remote_player->ip_addr, NETPLAY_PACKET_INFO, 1,
                                      local_player, sizeof(netplay_player_t));
                 }
             }
         }
 
-        // TCP socket breuk detectie
+        // TCP socket break detection
         if (serial_broken && netplay_status == NETPLAY_STATUS_CONNECTED) {
             serial_broken = false;
-            RG_LOGI("netplay: TCP serial breuk → verbinding verbreken\n");
+            RG_LOGI("netplay: TCP stream broken, dropping the connection\n");
             set_status(NETPLAY_STATUS_DISCONNECTED);
             network_cleanup();
         }
@@ -486,7 +499,7 @@ static void netplay_task(void *arg)
 }
 
 
-// ─── WiFi initialisatie (eenmalig) ───────────────────────────────────────────
+// ─── WiFi init (once) ────────────────────────────────────────────────────────
 
 static void init_wifi_once(void)
 {
@@ -518,7 +531,7 @@ static void init_wifi_once(void)
 }
 
 
-// ─── Publieke API ─────────────────────────────────────────────────────────────
+// ─── Public API ───────────────────────────────────────────────────────────────
 
 void rg_netplay_init(netplay_callback_t callback)
 {
@@ -664,6 +677,14 @@ void rg_netplay_sync(void *data_in, void *data_out, uint8_t data_len)
 {
     if (netplay_status != NETPLAY_STATUS_CONNECTED) return;
 
+    // Same bound as in handle_packet, from the other direction: the emulator
+    // decides data_len here, and sync_data is 16 bytes.
+    if (data_len > sizeof(local_player->sync_data)) {
+        RG_LOGE("netplay: sync payload of %d bytes does not fit in %d\n",
+                (int)data_len, (int)sizeof(local_player->sync_data));
+        return;
+    }
+
     memcpy(local_player->sync_data, data_in, data_len);
 
     if (netplay_mode == NETPLAY_MODE_HOST)
@@ -685,66 +706,52 @@ void rg_netplay_sync(void *data_in, void *data_out, uint8_t data_len)
 }
 
 
-// Send one link frame. On EAGAIN (full TCP buffer during a retransmit burst)
-// keep trying briefly: the callers in hw.c/cpu.c ignore the return value, so a
-// silently lost frame makes the partner wait until its safety net trips. A
-// half-sent frame is worse than no frame — the partner's stream is then no
-// longer on a frame boundary — so we treat that as session loss instead of
-// letting it silently desync.
-// Writes as much of buf as possible. Returns how much is left over.
-static int link_tx_write(const uint8_t *buf, int len)
+// Non-blocking progress on the emulator task. Never sleep in the serial hot
+// path: receive polling will retry after TCP has made room.
+static void link_tx_flush(void)
 {
     int sent = 0;
-    for (int attempt = 0; attempt < 20 && sent < len; attempt++) {
-        int n = send(serial_sock, buf + sent, len - sent, MSG_DONTWAIT);
+    while (sent < link_tx_left && !serial_broken) {
+        int n = send(serial_sock, link_tx_buf + sent, link_tx_left - sent, MSG_DONTWAIT);
         if (n > 0) {
             sent += n;
             continue;
         }
-        if (n == 0 || (errno != EAGAIN && errno != EWOULDBLOCK))
-            break;
-        vTaskDelay(pdMS_TO_TICKS(1));
+        if (n < 0 && errno == EINTR)
+            continue;
+        if (n == 0 || (errno != EAGAIN && errno != EWOULDBLOCK)) {
+            serial_broken = true;
+            RG_LOGW("netplay: TCP send failed (n=%d errno=%d)\n", n, errno);
+        }
+        break;
     }
-    return len - sent;
+    if (sent > 0) {
+        link_tx_left -= sent;
+        memmove(link_tx_buf, link_tx_buf + sent, link_tx_left);
+    }
 }
 
 int rg_netplay_link_send(uint8_t type, uint8_t seq, uint8_t data)
 {
-    if (serial_sock < 0)
+    if (serial_sock < 0 || serial_broken)
         return -1;
 
-    // First the tail of a previous frame that did not fully go through.
-    // Without this the partner would lose the frame boundary. Dropping the
-    // session over it is wrong: at 300 exchanges per second a partial send()
-    // under WiFi pressure is completely normal, and it used to cost the link
-    // mid-match.
-    if (link_tx_left > 0) {
-        int left = link_tx_write(link_tx_buf + (LINK_FRAME_LEN - link_tx_left), link_tx_left);
-        link_tx_left = left;
-        if (left > 0) {
-            // Still clogged. Dropping this frame is recoverable (the game
-            // retries, or the safety net steps in); tearing the stream is not.
-            RG_LOGW("link_send: output clogged, frame type=%u seq=%u skipped\n", type, seq);
-            return -1;
-        }
+    link_tx_flush();
+    if (serial_broken)
+        return -1;
+    if (link_tx_left > LINK_TX_CAPACITY - LINK_FRAME_LEN) {
+        // Callers cannot replay a lost frame. Fail explicitly instead of
+        // silently corrupting the game's exchange when this bound is reached.
+        RG_LOGW("netplay: link output queue full, disconnecting\n");
+        serial_broken = true;
+        return -1;
     }
 
     uint8_t frame[LINK_FRAME_LEN] = { LINK_MAGIC, type, seq, data };
-    int left = link_tx_write(frame, LINK_FRAME_LEN);
-
-    if (left == 0)
-        return 0;
-
-    if (left < LINK_FRAME_LEN) {
-        // Half sent: keep the rest and finish it on the next call.
-        memcpy(link_tx_buf, frame, LINK_FRAME_LEN);
-        link_tx_left = left;
-        return -1;
-    }
-
-    RG_LOGW("link_send: frame type=%u seq=%u data=0x%02X not sent (errno=%d)\n",
-            type, seq, data, errno);
-    return -1;
+    memcpy(link_tx_buf + link_tx_left, frame, LINK_FRAME_LEN);
+    link_tx_left += LINK_FRAME_LEN;
+    link_tx_flush();
+    return serial_broken ? -1 : 0;
 }
 
 // Deliver the next complete frame. Nothing is discarded: ordering stays
@@ -752,10 +759,14 @@ int rg_netplay_link_send(uint8_t type, uint8_t seq, uint8_t data)
 // survives between two calls.
 bool rg_netplay_link_recv(uint8_t *type, uint8_t *seq, uint8_t *data)
 {
-    if (serial_sock < 0) {
+    if (serial_sock < 0 || serial_broken) {
         link_rx_have = 0;
         return false;
     }
+
+    link_tx_flush();
+    if (serial_broken)
+        return false;
 
     while (link_rx_have < LINK_FRAME_LEN) {
         int n = recv(serial_sock, link_rx_buf + link_rx_have,
@@ -771,6 +782,8 @@ bool rg_netplay_link_recv(uint8_t *type, uint8_t *seq, uint8_t *data)
             }
             continue;
         }
+        if (n < 0 && errno == EINTR)
+            continue;
         if (n == 0 || (errno != EAGAIN && errno != EWOULDBLOCK)) {
             if (!serial_broken) {
                 serial_broken = true;

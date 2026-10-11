@@ -3,7 +3,6 @@
 ## Prerequisites
 A working installation of [ESP-IDF](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/get-started/) v5.x is required.
 Builds are made and tested with **v5.5**; older 4.x releases will not compile.
-Builds are made and tested with **v5.5**; older 4.x releases will not compile.
 
 ### ESP-IDF patches (optional)
 Patches in `tools/patches` may improve stability:
@@ -20,6 +19,18 @@ change to the SDK, not to this project, so it has to be redone after updating
 ESP-IDF. FAT32 cards work without any changes.
 
 ## Build commands
+
+For signed distribution images, set `BLOCKBOY_SIGNING_KEY` to the private signing
+key stored outside this source tree. For example, in PowerShell:
+
+```powershell
+$env:BLOCKBOY_SIGNING_KEY = 'C:/private/blockboy_signing_key.pem'
+```
+
+Keep the key out of source archives. The packer verifies each app's signature.
+This setting controls image packing and supplies ESP-IDF signing defaults for
+new builds. Existing per-app `sdkconfig` files can retain a previous signing-key
+path; update those local configurations if the key has moved.
 
 Build a flashable image:
 ```bash
@@ -50,6 +61,9 @@ esptool.py write_flash --flash_size detect 0x0 blockboy_*.img
 
 ## Development
 
+The GBA benchmark is hidden by default. Service > Shop Menu > In game >
+GBA benchmark enables it for testing. See [GBA benchmark](docs/GBA_BENCHMARK.md).
+
 Flash and monitor individual apps:
 ```bash
 python rg_tool.py --target 0v1Tech-BlockBoy-N16R8 --port COMx run launcher
@@ -64,3 +78,17 @@ Images used by the launcher are in `themes/default`. After editing, run `tools/g
 
 ## Windows
 Use `python rg_tool.py ...` instead of `./rg_tool.py ...` to ensure the correct Python interpreter is used.
+
+## Preparing publication files
+
+After a successful complete build, run:
+
+```bash
+python tools/package_publication.py
+```
+
+This verifies the image against all six built apps, the bootloader and partition
+table, then prepares an image, a source archive and SHA-256 manifests under
+`build/publication-v3-<version>/`. Source archives exclude generated builds,
+managed dependencies, private keys, ROM files and local research notes. Dependency
+lock files, source code and license notices are retained. Nothing is uploaded.

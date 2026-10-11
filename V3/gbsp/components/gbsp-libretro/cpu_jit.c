@@ -27,6 +27,7 @@
 #include "common.h"
 #include "xtensa/xtensa_emit.h"
 #include "cpu_jit.h"
+#include "gba_profile.h"
 
 u32 jit_enabled = 0;
 jit_stats_t jit_stats;
@@ -279,8 +280,8 @@ static jhash_t *jhash_insert(u32 pc, u32 offset, u16 n_instr, u16 flags, u16 wle
     if (jit_hash[idx].pc == 1u) { jit_hash_tomb--; goto place; }
     idx = (idx + 1) & (JIT_HASH_SIZE - 1);
   }
-  jit_hash_used++;
 place:
+  jit_hash_used++;   /* A reused tombstone becomes a live entry too. */
   jit_hash[idx].pc = pc;
   jit_hash[idx].offset = offset;
   jit_hash[idx].n_instr = n_instr;
@@ -415,7 +416,7 @@ u32 jit_blockmem(u32 packed, u32 next_pc)
 }
 
 /* ------------------------------------------------------------------ */
-/* Emit-bouwstenen                                                     */
+/* Emit building blocks                                                */
 /* ------------------------------------------------------------------ */
 
 #define OFF_REG(n)  ((n) * 4)
@@ -676,15 +677,29 @@ static inline void eg_sync_pc(xemit_t *e, u32 pc)
  * reg[PC]=tgt (loop start), jit_cycles=0 (budget spent → the dispatcher services the
  * pending events/IRQ that set the flag), exit. Mirrors the interpreter
  * (PC==idle_loop_target_pc → cycles_remaining=0). The loop now runs 1×/slice. */
-static void eg_idle_exit(xemit_t *e, u32 tgt)
+/* Set by an idle exit that halts; the dispatcher checks it (see execute_jit_impl). */
+static u32 jit_idle_halt;
+
+/* halt = 0: only end the slice (jit_cycles = 0), no CPU_HALT. Used for loops that poll
+ * an IO register (DISPSTAT/VCOUNT/timers): those wait for video/timer timing, not for
+ * an IRQ, so halting until an IRQ is wrong (see the generic idle detector). */
+static void eg_idle_exit(xemit_t *e, u32 tgt, int halt)
 {
   tb_pure = 0;
   xe_load_const(e, R_T0, tgt);
   xe_s32i(e, R_T0, R_BASE, OFF_PC);
 #if JIT_IDLE_HALT
-  /* CPU_HALT → update_gba fast-forwards to the wake IRQ (no per-event round-trip). */
-  xe_movi(e, R_T0, CPU_HALT);
-  xe_s32i(e, R_T0, R_BASE, OFF_REG(CPU_HALT_STATE));
+  if (halt)
+  {
+    /* CPU_HALT → update_gba fast-forwards to the wake IRQ (no per-event round-trip). */
+    xe_movi(e, R_T0, CPU_HALT);
+    xe_s32i(e, R_T0, R_BASE, OFF_REG(CPU_HALT_STATE));
+    xe_l32r(e, R_S0, xe_lit(e, (u32)(uintptr_t)&jit_idle_halt));
+    xe_movi(e, R_T3, 1);
+    xe_s32i(e, R_T3, R_S0, 0);             // jit_idle_halt = 1 (dispatcher safety net)
+  }
+#else
+  (void)halt;
 #endif
   xe_l32r(e, R_S0, xe_lit(e, (u32)(uintptr_t)&jit_cycles));
   xe_movi(e, R_T3, 0);
@@ -1117,6 +1132,15 @@ static jhash_t *translate_block(u32 pc)
    * only via an event/IRQ → fast-forwarding is correct. Catches idle loops in games
    * without an idle_loop_target_pc automatically. */
   int block_is_idle = 0;
+  /* Does the idle loop poll an IO register? Then it waits for video/timer timing
+   * (e.g. the DISPSTAT HBlank flag), not for an IRQ: HALT-until-IRQ would skip that
+   * timing, and inside an IRQ handler with IE masked nothing wakes the CPU again.
+   * Pokémon Pinball R/S polls DISPSTAT bit 1 in its IRQ callback with IE = 0x2000:
+   * the generic idle-HALT froze it on the title screen; Classic worked. Such loops
+   * only end the slice (event-by-event fast-forward, always correct). The polled
+   * address comes from the live registers at translation time: the loop's base
+   * registers are loop-invariant (no accumulated register, checked below). */
+  int idle_polls_io = 0;
 #if JIT_GENERIC_IDLE
   if (block_n >= 2)
   {
@@ -1132,11 +1156,18 @@ static jhash_t *translate_block(u32 pc)
         for (int i = 0; i < block_n - 1; i++)
         {
           u32 rdm, wrm; int isld, uns;
-          thumb_idle_classify(jfetch16(p + i * 2), &rdm, &wrm, &isld, &uns);
+          u16 iop = jfetch16(p + i * 2);
+          thumb_idle_classify(iop, &rdm, &wrm, &isld, &uns);
           if (uns) { ok = 0; break; }
           livein |= (rdm & ~wmaskr);                      // read before written = cross-iteration
           wmaskr |= wrm;
           if (isld) has_load = 1;
+          u32 ihi = iop >> 8, base = reg[(iop >> 3) & 7], imm5 = (iop >> 6) & 31, la = 0;
+          if (ihi >= 0x68 && ihi <= 0x6F)      la = base + imm5 * 4;   // ldr  rd,[rb,#imm]
+          else if (ihi >= 0x78 && ihi <= 0x7F) la = base + imm5;       // ldrb rd,[rb,#imm]
+          else if (ihi >= 0x88 && ihi <= 0x8F) la = base + imm5 * 2;   // ldrh rd,[rb,#imm]
+          if ((la >> 24) == 0x04)
+            idle_polls_io = 1;
         }
         if (ok && has_load && !(livein & wmaskr))         // no accumulated register
           block_is_idle = 1;
@@ -1254,7 +1285,7 @@ static jhash_t *translate_block(u32 pc)
         eg_put(&e, R_T2, rd);
         break;
 
-      /* ---- imm8-vormen ---- */
+      /* ---- imm8 forms ---- */
       case 0x20 ... 0x27: // mov r8, imm8
       {
         u32 d = eg_dst(r8, R_T0);
@@ -1308,7 +1339,7 @@ static jhash_t *translate_block(u32 pc)
             eg_flags_nz(&e, d, g); eg_dst_put(&e, rd, d);
             break;
           }
-          default: // lsl/lsr by reg → classic (carry-randgevallen)
+          default: // lsl/lsr by reg → classic (carry edge cases)
             eg_exit_pc(&e, p, cyc - (s32)seq, JEXIT_CLASSIC_ONE);
             terminated = 1;
             break;
@@ -1395,7 +1426,7 @@ static jhash_t *translate_block(u32 pc)
         u32 hrd = ((op >> 4) & 8) | (op & 7);
         u32 hrs = (op >> 3) & 0xF;
         if (hrd == REG_PC || hrs == REG_PC)
-        { // PC-varianten: zeldzaam → classic
+        { // PC variants: rare → classic
           eg_exit_pc(&e, p, cyc - (s32)seq, JEXIT_CLASSIC_ONE);
           terminated = 1;
           break;
@@ -1409,7 +1440,7 @@ static jhash_t *translate_block(u32 pc)
         eg_put(&e, R_T0, hrd);
         break;
       }
-      case 0x45: // cmp hireg → classic (incl. PC-randgevallen)
+      case 0x45: // cmp hireg → classic (incl. PC edge cases)
         eg_exit_pc(&e, p, cyc - (s32)seq, JEXIT_CLASSIC_ONE);
         terminated = 1;
         break;
@@ -1447,7 +1478,7 @@ static jhash_t *translate_block(u32 pc)
         break;
       }
 
-      /* ---- pc-relatieve constanten ---- */
+      /* ---- pc-relative constants ---- */
       case 0x48 ... 0x4F: // ldr r8, [pc, imm8] → ROM-literal folden
       {
         u32 a = ((p + 4) & ~3u) + imm8 * 4;
@@ -1568,9 +1599,10 @@ static jhash_t *translate_block(u32 pc)
         xe_patch_bcc(fx, e.ptr);
         // Idle loop? Curated (idle_loop_target_pc) or generically detected (block_is_idle:
         // pure poll loop that jumps to block start). Taken branch (spin) → fast-forward.
-        if ((idle_loop_target_pc && p == idle_loop_target_pc && tgt <= p) ||
-            (block_is_idle && tgt == pc))
-          eg_idle_exit(&e, tgt);
+        if (idle_loop_target_pc && p == idle_loop_target_pc && tgt <= p)
+          eg_idle_exit(&e, tgt, 1);
+        else if (block_is_idle && tgt == pc)
+          eg_idle_exit(&e, tgt, !idle_polls_io);
         else
           eg_link(&e, tgt, cyc + (s32)ws_cyc_nseq[(tgt >> 24) & 0xF][0]);   // taken
         terminated = 1;
@@ -1658,7 +1690,9 @@ static int run_classic_until_rom_thumb(u32 budget)
   jit_stats.classic_calls++;
   cached_exit_flag = 0;
   cached_exit_budget = budget;
+  uint32_t profile_start = gba_profile_begin();
   execute_arm((u32)jit_cycles);
+  gba_profile_end(GP_CLASSIC, profile_start);
   if (!cached_exit_flag)
   {
     cached_exit_budget = 0;
@@ -1705,7 +1739,9 @@ static void execute_jit_impl(u32 cycles)
 {
   if (!jit_enabled || !jit_wr || cheat_master_hook != ~0U)
   {
+    uint32_t profile_start = gba_profile_begin();
     execute_arm(cycles);
+    gba_profile_end(GP_CLASSIC, profile_start);
     return;
   }
 
@@ -1749,8 +1785,11 @@ static void execute_jit_impl(u32 cycles)
     }
 
     jhash_t *blk = jhash_lookup(pc);
-    if (!blk)
+    if (!blk) {
+      uint32_t profile_start = gba_profile_begin();
       blk = translate_block(pc);
+      gba_profile_end(GP_COMPILE, profile_start);
+    }
 
 #if JIT_IRAM_PIN
     blk->runcount++;                 // hotness (pinning)
@@ -1776,16 +1815,28 @@ static void execute_jit_impl(u32 cycles)
       reg[REG_V_FLAG] = (cpsr >> 28) & 1;
     }
 
+    uint32_t profile_start = gba_profile_begin();
 #if JIT_CALL0_BLOCKS
     u32 rc = jit_call0((void *)fn);   // call0 via the asm bridge (no windowed entry/retw)
 #else
     u32 rc = fn();
 #endif
+    gba_profile_end(GP_JIT, profile_start);
     jit_stats.block_runs++;
 
     reg[REG_CPSR] = (reg[REG_N_FLAG] << 31) | (reg[REG_Z_FLAG] << 30) |
                     (reg[REG_C_FLAG] << 29) | (reg[REG_V_FLAG] << 28) |
                     (reg[REG_CPSR] & 0xFF);
+
+    // Safety net for the idle-HALT: halting is only valid if an IRQ can wake the CPU.
+    // With no usable source enabled in IE (bit 13 Game Pak never fires) the CPU would
+    // stay halted forever; then keep spinning event by event instead.
+    if (jit_idle_halt)
+    {
+      jit_idle_halt = 0;
+      if (!(read_ioreg(REG_IE) & 0x1FFF) && reg[CPU_HALT_STATE] == CPU_HALT)
+        reg[CPU_HALT_STATE] = CPU_ACTIVE;
+    }
 
 
     // Idle-loop detection (per block, cheap in C)

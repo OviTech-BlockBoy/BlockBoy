@@ -89,6 +89,10 @@ bool rg_ota_job_read(const char *path, rg_ota_job_t *out, char *error, size_t er
 // Writes a job file (used by the launcher after downloading).
 bool rg_ota_job_write(const char *path, const rg_ota_job_t *job);
 
+// Compares "3.10.2"-style versions numerically per component, returning <0, 0
+// or >0. A plain strcmp would call "3.9.0" newer than "3.10.0".
+int rg_ota_version_compare(const char *a, const char *b);
+
 // Computes the sha256 of a file on the SD card. 'hex_out' must be 65 bytes.
 // progress_cb may be NULL; it is called with (bytes read, total).
 typedef void (*rg_ota_progress_t)(size_t done, size_t total, void *arg);

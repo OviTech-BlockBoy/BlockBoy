@@ -119,10 +119,10 @@ ducalex, with the following changes:
 - Showcase mode with game selection, sleep timer and scheduled wake-up
 - Boot animation options (blocks, scroll, off)
 - Battery warning threshold and calibration
-- Game Boy Advance emulator tuned for the Pokemon titles: a Thumb/ARM JIT
+- Game Boy Advance emulator tuned for the Pokemon titles: a ROM Thumb JIT
   recompiler, dual-core render offload, a native MP2k audio mixer and a faster
-  path for streaming the ROM off the SD card, taking Pokemon Emerald from around
-  30 fps on the plain interpreter to close to a steady 60
+  path for streaming ROM data from the SD card. ARM and other unsupported paths
+  use the interpreter; performance depends on the game and scene.
 - ST7789 IPS panel on an 80 MHz display bus, with panel tuning options
 - Two rotary wheels for brightness and volume, replacing the side buttons
 - Battery-backed real-time clock and physical status LEDs

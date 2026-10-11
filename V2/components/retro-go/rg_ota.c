@@ -75,6 +75,29 @@ bool rg_ota_sha256_file(const char *path, char *hex_out, rg_ota_progress_t progr
     return true;
 }
 
+int rg_ota_version_compare(const char *a, const char *b)
+{
+    while (*a || *b)
+    {
+        int na = 0, nb = 0;
+
+        while (*a >= '0' && *a <= '9')
+            na = na * 10 + (*a++ - '0');
+        while (*b >= '0' && *b <= '9')
+            nb = nb * 10 + (*b++ - '0');
+
+        if (na != nb)
+            return na < nb ? -1 : 1;
+
+        // Skip the separator; anything that is not a digit counts as a boundary.
+        while (*a && (*a < '0' || *a > '9'))
+            a++;
+        while (*b && (*b < '0' || *b > '9'))
+            b++;
+    }
+    return 0;
+}
+
 static void set_error(char *error, size_t error_len, const char *msg)
 {
     if (error && error_len)

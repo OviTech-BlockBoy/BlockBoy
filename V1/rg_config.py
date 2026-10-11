@@ -39,3 +39,13 @@ PROJECT_APPS = {
 # Recovery/flash app. Runs as 'factory', so the bootloader falls back to it
 # when otadata is empty or corrupt. It is NEVER replaced via OTA.
 PROJECT_FLASHER = ['flasher', 0x90000]  # 576K
+
+# RSA-3072 key that every app image is signed with. It lives outside the repo on
+# purpose: it is the one thing in this project that cannot be regenerated, and a
+# key in a public tree is not a key. Losing it means never shipping another
+# update the devices in the field will accept.
+#
+# rg_tool.py checks EVERY app against it while packing the image and refuses to
+# build one that would not install, so this is not a step anybody has to
+# remember.
+SIGNING_KEY = os.getenv("BLOCKBOY_SIGNING_KEY", "")

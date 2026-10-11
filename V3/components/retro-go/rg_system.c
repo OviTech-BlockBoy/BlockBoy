@@ -171,11 +171,34 @@ static bool update_boot_config(const char *partition, const char *name, const ch
     const esp_partition_t *current = esp_ota_get_boot_partition();
     if (partition && (!current || strncmp(current->label, partition, 16) != 0))
     {
-        esp_err_t err = esp_ota_set_boot_partition(esp_partition_find_first(
-                ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, partition));
+        const esp_partition_t *target = esp_partition_find_first(
+                ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, partition);
+        esp_err_t err;
+        if (target && target->subtype == ESP_PARTITION_SUBTYPE_APP_FACTORY)
+        {
+            // The factory partition holds the flasher, and an update never replaces it:
+            // only USB or the web flasher does. A unit updated over the air from firmware
+            // that predates app signing therefore still runs an unsigned flasher, and
+            // esp_ota_set_boot_partition() would verify its signature and refuse it --
+            // after which no update could ever be installed again. Booting the factory
+            // app only takes erasing otadata, which is all esp_ota_set_boot_partition()
+            // does for it after its checks, so do that once an app is known to be there.
+            esp_app_desc_t desc;
+            err = esp_ota_get_partition_description(target, &desc);
+            if (err == ESP_OK)
+            {
+                const esp_partition_t *otadata = esp_partition_find_first(
+                        ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_OTA, NULL);
+                err = otadata ? esp_partition_erase_range(otadata, 0, otadata->size) : ESP_ERR_NOT_FOUND;
+            }
+        }
+        else
+        {
+            err = esp_ota_set_boot_partition(target);
+        }
         if (err != ESP_OK)
         {
-            RG_LOGE("esp_ota_set_boot_partition returned 0x%02X!", err);
+            RG_LOGE("Switching the boot partition to '%s' failed: 0x%02X!", partition, err);
             return false;
         }
     }

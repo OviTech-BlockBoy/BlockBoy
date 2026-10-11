@@ -127,6 +127,8 @@ display_type_t rg_display_get_type(void);
 void rg_display_gscan_test(void);
 
 void rg_display_set_scaling(display_scaling_t scaling);
+// Temporary setting, without writing user preferences.
+void rg_display_set_scaling_runtime(display_scaling_t scaling);
 display_scaling_t rg_display_get_scaling(void);
 // Stats overlay (core/fps/busy/frameskip/heap) in the screen border while playing,
 // refreshed once per second by the display task. Meant for Scaling=Off (free border);

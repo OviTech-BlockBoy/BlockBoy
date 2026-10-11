@@ -39,7 +39,7 @@ boot_mode selected_boot_mode = boot_game;
 u32 skip_next_frame = 0;
 int sprite_limit = 1;
 
-// jit_test.c — haalbaarheidstest executable PSRAM (zie P4 JIT-traject)
+// jit_test.c — feasibility test for executable PSRAM
 extern bool jit_test_run(void);
 // jit_selftest.c — stage 1 Xtensa JIT: emitter/ABI/literal/callx8 pipeline test
 extern bool jit_selftest_run(void);
@@ -491,7 +491,7 @@ void app_main(void)
                 size_t exfree = heap_caps_get_largest_free_block(MALLOC_CAP_EXEC);
                 size_t extot  = heap_caps_get_free_size(MALLOC_CAP_EXEC);
                 size_t infree = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
-                // Pak wat exec-IRAM er is (2KB headroom), cap 24KB.
+                // Take whatever executable IRAM is free (2KB headroom), cap 24KB.
                 u32 iram_sz = exfree > 3072 ? ((u32)exfree - 2048) & ~15u : 0;
                 if (iram_sz > 24 * 1024) iram_sz = 24 * 1024;
                 void *ib = iram_sz ? heap_caps_malloc(iram_sz, MALLOC_CAP_EXEC) : NULL;

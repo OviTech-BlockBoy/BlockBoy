@@ -25,13 +25,33 @@
 //   -- it reports absolute field, so a stored direction still means the same
 //   thing tomorrow.
 //
-// Matching ignores sign, which is the point: a magnet turned over produces the
-// exact opposite vector, so north-up and south-up in the same spot land on the
-// same cartridge. What separates cartridges is *where* the magnet sits, since
-// two positions that are not mirror images about the sensor point the field in
-// measurably different directions. Field strength is only used to decide that a
-// cartridge is present at all -- it varies too much with glue and air gap to
-// tell two positions apart.
+// Matching keeps the sign, so a magnet turned over is a *different* cartridge
+// and gets its own ROM. Reversing a magnet negates the whole field vector, which
+// is as far from the original direction as anything can be -- the cleanest split
+// the sensor can see. That doubles what each magnet position is worth and gives
+// every position its mirror image back as a second, unambiguous entry.
+//
+// The cost is that polarity now matters at assembly: a cartridge whose magnet
+// went in the other way round is simply not recognised. That is the failure to
+// prefer -- it starts nothing, instead of starting somebody else's game.
+//
+// What separates two cartridges is therefore the magnet's position *and* which
+// pole faces the sensor. Field strength is only used to decide that a cartridge
+// is present at all -- it varies too much with glue and air gap to tell two
+// positions apart.
+//
+// Every direction, stored or measured, is relative to the console's own field
+// with the slot empty. That offset is not a detail: on the first V3 board it is
+// 685uT against a cartridge signal of roughly 200uT, so an uncalibrated console
+// reads "cartridge present" with nothing in the slot.
+//
+// Measuring it is "Calibrate" in the owner's own menu, not a service step, even
+// though it normally happens once in production. It has to be reachable by the
+// owner: the offset belongs to a particular console, so a warranty swap, a
+// replaced speaker or a board that shipped before anyone thought to do it all
+// leave a unit that only its owner can put right. Pairing on a console that has
+// not been calibrated offers to do it there and then, because that is where the
+// need shows up.
 
 typedef enum {
     MAGNET_NONE  = 0,

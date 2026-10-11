@@ -1,4 +1,5 @@
 #include "rg_system.h"
+#include "rg_secrets.h"
 #include "rg_network.h"
 #ifdef ESP_PLATFORM
 #include <mdns.h>
@@ -31,6 +32,7 @@
 #include <esp_sntp.h>
 #include <esp_wifi.h>
 #include <esp_event.h>
+#include <esp_timer.h>
 #include <nvs_flash.h>
 #include <lwip/err.h>
 #include <lwip/sys.h>
@@ -73,27 +75,113 @@ static void stop_mdns(void)
 static rg_wifi_config_t wifi_config = {0};
 static esp_netif_t *netif_sta, *netif_ap, *netif;
 
+// Reconnect policy. The driver raises STA_DISCONNECTED the instant a connect
+// attempt fails, and answering every one with an immediate esp_wifi_connect()
+// (as this used to do) turns a wrong stored password into a non-stop storm of
+// failed WPA2/WPA3 handshakes against the router. Some routers cope badly and
+// briefly drop their other clients, which showed up as a phone's Wi-Fi going
+// on and off while the owner was retyping the password on the device. Now
+// each failure waits 1, 2, 4, 8 s ... up to RECONNECT_MAX_DELAY_MS before the
+// next try. After RECONNECT_FAST_TRIES failures in a row we report
+// DISCONNECTED (so the UI stops saying "Connecting") and keep one quiet retry
+// per RECONNECT_SLOW_DELAY_MS, so a router that comes back later is still
+// picked up without anyone touching the device.
+#define RECONNECT_FAST_TRIES   6
+#define RECONNECT_MAX_DELAY_MS 15000
+#define RECONNECT_SLOW_DELAY_MS 60000
+static esp_timer_handle_t reconnect_timer;
+static int reconnect_failures;
+// Set while the STA was brought up only to run a scan: STA_START must then
+// not kick off a connect attempt with whatever config the driver still holds.
+static bool sta_started_for_scan;
+
+static void reconnect_timer_cb(void *arg)
+{
+    // The timer outlives a stop/start cycle; only fire when still relevant.
+    if (network_state == RG_NETWORK_CONNECTING || network_state == RG_NETWORK_DISCONNECTED)
+    {
+        if (netif == netif_sta && !sta_started_for_scan)
+            esp_wifi_connect();
+    }
+}
+
+static void schedule_reconnect(void)
+{
+    uint32_t delay_ms;
+    if (reconnect_failures < RECONNECT_FAST_TRIES)
+    {
+        delay_ms = 1000u << reconnect_failures;
+        if (delay_ms > RECONNECT_MAX_DELAY_MS)
+            delay_ms = RECONNECT_MAX_DELAY_MS;
+        network_state = RG_NETWORK_CONNECTING;
+    }
+    else
+    {
+        delay_ms = RECONNECT_SLOW_DELAY_MS;
+        network_state = RG_NETWORK_DISCONNECTED;
+        if (reconnect_failures == RECONNECT_FAST_TRIES)
+            RG_LOGW("Could not reach '%s' after %d attempts. Retrying every %ds.",
+                    wifi_config.ssid, reconnect_failures, RECONNECT_SLOW_DELAY_MS / 1000);
+    }
+    reconnect_failures++;
+
+    if (!reconnect_timer)
+    {
+        const esp_timer_create_args_t args = {.callback = &reconnect_timer_cb, .name = "wifi_reconnect"};
+        if (esp_timer_create(&args, &reconnect_timer) != ESP_OK)
+            return;
+    }
+    esp_timer_stop(reconnect_timer);
+    esp_timer_start_once(reconnect_timer, (uint64_t)delay_ms * 1000);
+}
+
+static void cancel_reconnect(void)
+{
+    if (reconnect_timer)
+        esp_timer_stop(reconnect_timer);
+    reconnect_failures = 0;
+}
+
 static void network_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data)
 {
     if (event_base == WIFI_EVENT)
     {
         if (event_id == WIFI_EVENT_STA_STOP || event_id == WIFI_EVENT_AP_STOP)
         {
+            cancel_reconnect();
             network_state = RG_NETWORK_DISCONNECTED;
             RG_LOGI("Wifi stopped.");
         }
         else if (event_id == WIFI_EVENT_STA_START)
         {
-            network_state = RG_NETWORK_CONNECTING;
-            RG_LOGI("Connecting to '%s'...", wifi_config.ssid);
-            esp_wifi_connect();
+            if (sta_started_for_scan)
+            {
+                RG_LOGI("Wi-Fi up for a scan only, not connecting.");
+            }
+            else
+            {
+                cancel_reconnect();
+                network_state = RG_NETWORK_CONNECTING;
+                RG_LOGI("Connecting to '%s'...", wifi_config.ssid);
+                esp_wifi_connect();
+            }
         }
         else if (event_id == WIFI_EVENT_STA_DISCONNECTED)
         {
-            network_state = RG_NETWORK_CONNECTING;
-            RG_LOGW("Got disconnected from AP. Reconnecting...");
-            rg_system_event(RG_EVENT_NETWORK_DISCONNECTED, NULL);
-            esp_wifi_connect();
+            wifi_event_sta_disconnected_t *ev = event_data;
+            if (sta_started_for_scan)
+            {
+                RG_LOGI("STA disconnected during scan (reason=%d), ignoring.", ev ? ev->reason : -1);
+            }
+            else
+            {
+                bool was_connected = network_state == RG_NETWORK_CONNECTED;
+                RG_LOGW("Disconnected from '%s' (reason=%d, attempt %d).",
+                        wifi_config.ssid, ev ? ev->reason : -1, reconnect_failures + 1);
+                if (was_connected)
+                    rg_system_event(RG_EVENT_NETWORK_DISCONNECTED, NULL);
+                schedule_reconnect();
+            }
         }
         else if (event_id == WIFI_EVENT_AP_START)
         {
@@ -108,6 +196,7 @@ static void network_event_handler(void *arg, esp_event_base_t event_base, int32_
     {
         if (event_id == IP_EVENT_STA_GOT_IP)
         {
+            cancel_reconnect();
             network_state = RG_NETWORK_CONNECTED;
             rg_network_t info = rg_network_get_info();
             RG_LOGI("Connected! IP: %s, Chan: %d, RSSI: %d", info.ip_addr, info.channel, info.rssi);
@@ -132,12 +221,13 @@ bool rg_network_wifi_read_config(int slot, rg_wifi_config_t *out)
     if (slot < 0 || slot > 99)
         return false;
 
-    char key_ssid[16], key_password[16], key_channel[16], key_mode[16];
+    char key_ssid[16], key_password[16], key_channel[16], key_mode[16], key_secret[16];
     rg_wifi_config_t config = {0};
     char *ptr;
 
     snprintf(key_ssid, 16, "%s%d", SETTING_WIFI_SSID, slot);
     snprintf(key_password, 16, "%s%d", SETTING_WIFI_PASSWORD, slot);
+    snprintf(key_secret, 16, "wifi_pw%d", slot);
     snprintf(key_channel, 16, "%s%d", SETTING_WIFI_CHANNEL, slot);
     snprintf(key_mode, 16, "%s%d", SETTING_WIFI_MODE, slot);
 
@@ -145,8 +235,16 @@ bool rg_network_wifi_read_config(int slot, rg_wifi_config_t *out)
 
     if ((ptr = rg_settings_get_string(NS_WIFI, key_ssid, NULL)))
         memccpy(config.ssid, ptr, 0, 32), free(ptr);
-    if ((ptr = rg_settings_get_string(NS_WIFI, key_password, NULL)))
-        memccpy(config.password, ptr, 0, 64), free(ptr);
+    // The password is a confidential asset, so it lives in NVS and not in the
+    // JSON on the SD card (see rg_secrets.h). Older firmware kept it there;
+    // this moves any leftover across and wipes it off the card.
+    rg_secret_migrate(NS_WIFI, key_password, key_secret);
+    // The very first firmware used un-suffixed keys for slot 0. Scrub that one
+    // too, even when a suffixed slot 0 exists: a stale plaintext copy on the
+    // card is the whole thing this is about.
+    if (slot == 0)
+        rg_secret_migrate(NS_WIFI, SETTING_WIFI_PASSWORD, key_secret);
+    rg_secret_get(key_secret, config.password, sizeof(config.password));
     config.channel = rg_settings_get_number(NS_WIFI, key_channel, 0);
     config.ap_mode = rg_settings_get_number(NS_WIFI, key_mode, 0);
 
@@ -154,8 +252,7 @@ bool rg_network_wifi_read_config(int slot, rg_wifi_config_t *out)
     {
         if ((ptr = rg_settings_get_string(NS_WIFI, SETTING_WIFI_SSID, NULL)))
             memccpy(config.ssid, ptr, 0, 32), free(ptr);
-        if ((ptr = rg_settings_get_string(NS_WIFI, SETTING_WIFI_PASSWORD, NULL)))
-            memccpy(config.password, ptr, 0, 64), free(ptr);
+        rg_secret_get(key_secret, config.password, sizeof(config.password));
         config.channel = rg_settings_get_number(NS_WIFI, SETTING_WIFI_CHANNEL, 0);
         config.ap_mode = rg_settings_get_number(NS_WIFI, SETTING_WIFI_MODE, 0);
     }
@@ -172,14 +269,15 @@ bool rg_network_wifi_write_config(int slot, const rg_wifi_config_t *config)
     if (slot < 0 || slot > 99 || !config)
         return false;
 
-    char key_ssid[16], key_password[16], key_channel[16], key_mode[16];
+    char key_ssid[16], key_password[16], key_channel[16], key_mode[16], key_secret[16];
     snprintf(key_ssid, 16, "%s%d", SETTING_WIFI_SSID, slot);
     snprintf(key_password, 16, "%s%d", SETTING_WIFI_PASSWORD, slot);
+    snprintf(key_secret, 16, "wifi_pw%d", slot);
     snprintf(key_channel, 16, "%s%d", SETTING_WIFI_CHANNEL, slot);
     snprintf(key_mode, 16, "%s%d", SETTING_WIFI_MODE, slot);
 
     rg_settings_set_string(NS_WIFI, key_ssid, config->ssid);
-    rg_settings_set_string(NS_WIFI, key_password, config->password);
+    rg_secret_set(key_secret, config->password);
     rg_settings_set_number(NS_WIFI, key_channel, config->channel);
     rg_settings_set_number(NS_WIFI, key_mode, config->ap_mode);
     return true;
@@ -190,14 +288,15 @@ bool rg_network_wifi_delete_config(int slot)
     if (slot < 0 || slot > 99)
         return false;
 
-    char key_ssid[16], key_password[16], key_channel[16], key_mode[16];
+    char key_ssid[16], key_password[16], key_channel[16], key_mode[16], key_secret[16];
     snprintf(key_ssid, 16, "%s%d", SETTING_WIFI_SSID, slot);
     snprintf(key_password, 16, "%s%d", SETTING_WIFI_PASSWORD, slot);
+    snprintf(key_secret, 16, "wifi_pw%d", slot);
     snprintf(key_channel, 16, "%s%d", SETTING_WIFI_CHANNEL, slot);
     snprintf(key_mode, 16, "%s%d", SETTING_WIFI_MODE, slot);
 
     rg_settings_delete(NS_WIFI, key_ssid);
-    rg_settings_delete(NS_WIFI, key_password);
+    rg_secret_delete(key_secret);
     rg_settings_delete(NS_WIFI, key_channel);
     rg_settings_delete(NS_WIFI, key_mode);
     return true;
@@ -228,6 +327,9 @@ bool rg_network_wifi_start(void)
         RG_LOGW("Can't start wifi: No SSID has been configured.\n");
         return false;
     }
+
+    cancel_reconnect();
+    sta_started_for_scan = false;
 
     if (wifi_config.ap_mode)
     {
@@ -267,40 +369,17 @@ void rg_network_wifi_stop(void)
 {
 #ifdef RG_ENABLE_NETWORKING
     RG_ASSERT(network_state > RG_NETWORK_DISABLED, "Please call rg_network_init() first");
+    cancel_reconnect();
     stop_mdns();
     esp_wifi_stop();
     netif = NULL;
 #endif
 }
 
-int rg_network_wifi_scan(rg_wifi_scan_result_t *results, int max_results)
-{
 #ifdef RG_ENABLE_NETWORKING
-    if (!results || max_results <= 0)
-        return -1;
-    if (network_state == RG_NETWORK_DISABLED)
-    {
-        RG_LOGW("Wi-Fi scan requested but network not initialised");
-        return -1;
-    }
-
+static int wifi_scan_records(rg_wifi_scan_result_t *results, int max_results)
+{
     esp_err_t err;
-
-    // If Wi-Fi is already up (connected or connecting) we scan in place: a
-    // foreground scan briefly hops channels and returns to the AP, so the
-    // connection is kept. Tearing the connection down here used to make
-    // esp_wifi_scan_start fail with a state error ("Scan failed") whenever you
-    // were already on a network. Only bring the STA up ourselves when Wi-Fi
-    // isn't started yet.
-    if (network_state != RG_NETWORK_CONNECTED && network_state != RG_NETWORK_CONNECTING)
-    {
-        esp_wifi_stop();
-        err = esp_wifi_set_mode(WIFI_MODE_STA);
-        if (err != ESP_OK) { RG_LOGE("set_mode(STA) failed: 0x%x", err); return -1; }
-        err = esp_wifi_start();
-        if (err != ESP_OK) { RG_LOGE("wifi_start failed: 0x%x", err); return -1; }
-    }
-
     wifi_scan_config_t scan_cfg = {
         .ssid = NULL, .bssid = NULL, .channel = 0, .show_hidden = false,
         .scan_type = WIFI_SCAN_TYPE_ACTIVE,
@@ -334,6 +413,48 @@ int rg_network_wifi_scan(rg_wifi_scan_result_t *results, int max_results)
 
     RG_LOGI("Wi-Fi scan found %d networks (returning %d)", ap_count, out_count);
     return out_count;
+}
+#endif
+
+int rg_network_wifi_scan(rg_wifi_scan_result_t *results, int max_results)
+{
+#ifdef RG_ENABLE_NETWORKING
+    if (!results || max_results <= 0)
+        return -1;
+    if (network_state == RG_NETWORK_DISABLED)
+    {
+        RG_LOGW("Wi-Fi scan requested but network not initialised");
+        return -1;
+    }
+
+    // If Wi-Fi is already up (connected or connecting) we scan in place: a
+    // foreground scan briefly hops channels and returns to the AP, so the
+    // connection is kept. Tearing the connection down here used to make
+    // esp_wifi_scan_start fail with a state error ("Scan failed") whenever you
+    // were already on a network. Only bring the STA up ourselves when Wi-Fi
+    // isn't started yet, and then take it down again afterwards: the user is
+    // about to pick a network and type a password, and the radio must not sit
+    // there trying to connect with a stale config in the meantime.
+    bool started_here = network_state != RG_NETWORK_CONNECTED && network_state != RG_NETWORK_CONNECTING;
+    if (started_here)
+    {
+        esp_err_t err;
+        esp_wifi_stop();
+        sta_started_for_scan = true;
+        err = esp_wifi_set_mode(WIFI_MODE_STA);
+        if (err != ESP_OK) { RG_LOGE("set_mode(STA) failed: 0x%x", err); sta_started_for_scan = false; return -1; }
+        err = esp_wifi_start();
+        if (err != ESP_OK) { RG_LOGE("wifi_start failed: 0x%x", err); sta_started_for_scan = false; return -1; }
+    }
+
+    int count = wifi_scan_records(results, max_results);
+
+    if (started_here)
+    {
+        esp_wifi_stop();
+        sta_started_for_scan = false;
+    }
+    return count;
 #else
     return -1;
 #endif

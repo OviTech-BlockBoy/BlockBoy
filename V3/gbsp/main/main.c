@@ -1,4 +1,5 @@
 #include <rg_system.h>
+#include "rg_benchmark.h"
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -39,7 +40,7 @@ boot_mode selected_boot_mode = boot_game;
 u32 skip_next_frame = 0;
 int sprite_limit = 1;
 
-// jit_test.c — haalbaarheidstest executable PSRAM (zie P4 JIT-traject)
+// Executable PSRAM feasibility test.
 extern bool jit_test_run(void);
 // jit_selftest.c — stage 1 Xtensa JIT: emitter/ABI/literal/callx8 pipeline test
 extern bool jit_selftest_run(void);
@@ -213,7 +214,7 @@ static bool screenshot_handler(const char *filename, int width, int height)
 // Stats overlay label (rg_display weak hook): shows the live CPU core in the border.
 const char *rg_display_osd_tag(void)
 {
-    return jit_enabled ? "jit" : "cla";
+    return gba_benchmark_active() ? "REC" : (jit_enabled ? "jit" : "cla");
 }
 
 static bool save_state_handler(const char *filename)
@@ -394,8 +395,12 @@ static void render_offload_task(void *arg)
     {
         if (xSemaphoreTake(s_snap_ready, pdMS_TO_TICKS(200)) != pdTRUE)
             continue;
+        bool measure = gba_benchmark_detail();
+        int64_t begin = measure ? rg_system_timer() : 0;
         render_offload_frame((u16 *)s_render_target->data);  // g_snap -> target (this core)
+        int64_t rendered = measure ? rg_system_timer() : 0;
         rg_display_submit(s_render_target, 0);               // blit
+        if (measure) gba_benchmark_offload(rendered - begin, rg_system_timer() - rendered);
         xSemaphoreGive(s_snap_free);
     }
     vTaskDelete(NULL);
@@ -415,6 +420,42 @@ static void render_offload_start(void)
     xTaskCreatePinnedToCore(render_offload_task, "rofl", 4096, NULL, 5, NULL, 1 - emu_core);
 }
 #endif
+
+bool gba_benchmark_drain(void)
+{
+#if RENDER_OFFLOAD
+    if (s_snap_free) {
+        if (xSemaphoreTake(s_snap_free, pdMS_TO_TICKS(2000)) != pdTRUE) return false;
+        xSemaphoreGive(s_snap_free);
+    }
+#endif
+    return true;
+}
+int gba_benchmark_frameskip(void) { return user_frameskip; }
+void gba_benchmark_settings(bool apply)
+{
+    static int saved_user_skip, saved_app_skip, saved_normal_skip, saved_sound, saved_jit, saved_scaling;
+    static float saved_speed;
+    if (apply) {
+        saved_user_skip = user_frameskip; saved_app_skip = app->frameskip;
+        saved_sound = sound_master_enable; saved_jit = jit_enabled;
+        saved_scaling = rg_display_get_scaling(); saved_speed = rg_emu_get_speed();
+        rg_emu_set_speed(1.0f);
+        saved_normal_skip = app->frameskip;
+        user_frameskip = app->frameskip = -1; skip_next_frame = 0;
+        if (!jit_enabled) { jit_invalidate_all(); jit_enabled = 1; }
+        sound_master_enable = 1;
+        rg_display_set_scaling_runtime(RG_DISPLAY_SCALING_OFF);
+    } else {
+        // Preserve rg_emu_set_speed's remembered normal-speed frameskip too.
+        app->frameskip = saved_normal_skip;
+        rg_emu_set_speed(saved_speed);
+        user_frameskip = saved_user_skip; app->frameskip = saved_app_skip;
+        skip_next_frame = 0;
+        sound_master_enable = saved_sound; jit_enabled = saved_jit;
+        rg_display_set_scaling_runtime(saved_scaling);
+    }
+}
 
 void app_main(void)
 {
@@ -491,7 +532,7 @@ void app_main(void)
                 size_t exfree = heap_caps_get_largest_free_block(MALLOC_CAP_EXEC);
                 size_t extot  = heap_caps_get_free_size(MALLOC_CAP_EXEC);
                 size_t infree = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
-                // Pak wat exec-IRAM er is (2KB headroom), cap 24KB.
+                // Use available executable IRAM, leaving 2KB free; cap at 24KB.
                 u32 iram_sz = exfree > 3072 ? ((u32)exfree - 2048) & ~15u : 0;
                 if (iram_sz > 24 * 1024) iram_sz = 24 * 1024;
                 void *ib = iram_sz ? heap_caps_malloc(iram_sz, MALLOC_CAP_EXEC) : NULL;
@@ -603,11 +644,12 @@ void app_main(void)
 
     while (true)
     {
-        const int64_t startTime = rg_system_timer();
+        int64_t startTime = rg_system_timer();
         uint32_t joystick = rg_input_read_gamepad();
 
         if (joystick & (RG_KEY_MENU | RG_KEY_OPTION))
         {
+            gba_benchmark_stop("menu");
 #if RENDER_OFFLOAD
             // Quiesce the offload pipeline before the menu, while the display is still free.
             // Otherwise the render task (core1) hangs mid-rg_display_submit once the menu
@@ -642,6 +684,12 @@ void app_main(void)
             }
         }
 
+        gba_benchmark_begin_frame(!jit_boot_defer);
+        startTime = rg_system_timer();
+        bool bench_detail = gba_benchmark_detail();
+        bool bench_drawn = !skip_next_frame, bench_offloaded = false;
+        uint32_t bench_execute = 0, bench_output = 0, bench_pacing = 0, bench_wait = 0;
+        int64_t bench_phase = bench_detail ? startTime : 0;
         update_input();
         rumble_frame_reset();
         clear_gamepak_stickybits();
@@ -667,7 +715,9 @@ void app_main(void)
             xSemaphoreGive(s_snap_free);
         }
 #endif
+        if (bench_detail) { bench_wait = rg_system_timer() - bench_phase; bench_phase = rg_system_timer(); }
         execute_jit(execute_cycles); // falls back to execute_arm in Classic mode
+        if (bench_detail) { bench_execute = rg_system_timer() - bench_phase; bench_phase = rg_system_timer(); }
 
         // Wireless Adapter (RFU) per-frame housekeeping (broadcast announce timing,
         // timeouts). Only active for FLAGS_RFU games; no-op otherwise. (rfu_update is
@@ -684,6 +734,7 @@ void app_main(void)
             bool was_clean = (g_offload_active && g_predict_clean);
             if (was_clean)
             {
+                bench_offloaded = true;
                 xSemaphoreTake(s_snap_free, portMAX_DELAY);  // render task done with g_snap
                 render_snap_capture();                       // live state -> g_snap (emu core)
                 s_render_target = currentUpdate;
@@ -706,6 +757,7 @@ void app_main(void)
 #endif
         }
 
+        if (bench_detail) bench_output = rg_system_timer() - bench_phase;
         rg_system_tick(rg_system_timer() - startTime);
 
         // Decide skips before rg_audio_submit: that call blocks for pacing and
@@ -723,6 +775,7 @@ void app_main(void)
         else if (skip_next_frame > 0)
             skip_next_frame--;
 
+        if (bench_detail) bench_phase = rg_system_timer();
         if (sound_master_enable)
         {
             size_t frames_count = sound_read_samples((s16 *)mixbuffer, AUDIO_BUFFER_LENGTH);
@@ -733,6 +786,9 @@ void app_main(void)
             // No audio = no pacing from rg_audio_submit; don't run faster than 60fps
             rg_task_delay((app->frameTime - elapsed) / 1000);
         }
+        if (bench_detail) bench_pacing = rg_system_timer() - bench_phase;
+        gba_benchmark_end_frame(rg_system_timer() - startTime, bench_drawn, bench_offloaded,
+                                bench_execute, bench_output, bench_pacing, bench_wait);
     }
 
     RG_PANIC("GBsP Ended");

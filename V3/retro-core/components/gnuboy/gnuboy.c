@@ -118,6 +118,15 @@ void gnuboy_run(bool draw)
 		return;
 	}
 
+	// Only a frame that is rendered from line 0 is complete. When the game switches
+	// its LCD on, R_LY restarts at 0 part-way through a call (gb_lcd_lcdc_change), so
+	// the next call begins mid-screen: its buffer only gets the lower lines and the
+	// top holds whatever was there before. The same happens after loading a save
+	// state that was taken mid-frame. Showing such a frame flashes a partial picture,
+	// most visibly between the loading screen and a game's first frame. Don't hand
+	// it to the host; the next frame starts at line 0 and is whole.
+	const bool full_frame = (R_LY == 0);
+
 	// We emulate until vblank (0..144). Bail out early if the game disables
 	// the LCD mid-frame — when LCD is off, gb_lcd_emulate does not advance R_LY,
 	// so this loop would otherwise spin forever.
@@ -132,7 +141,7 @@ void gnuboy_run(bool draw)
 
 	/* When using GB_PIXEL_PALETTED, the host should draw the frame in this callback
 	   because the palette can be modified below before gnuboy_run returns. */
-	if (draw && GB.video.callback) {
+	if (draw && full_frame && GB.video.callback) {
 		(GB.video.callback)(GB.video.buffer);
 	}
 

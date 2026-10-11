@@ -134,7 +134,7 @@ CONFIG_FATFS_USE_FASTSEEK=y
 #
 # FreeRTOS
 #
-# 1000Hz tick + scheduler in IRAM: lagere latency tussen emulatie- en display-task
+# 1000Hz tick + scheduler in IRAM: lower latency between the emulation and display tasks
 CONFIG_FREERTOS_HZ=1000
 CONFIG_FREERTOS_IN_IRAM=y
 CONFIG_FREERTOS_CHECK_STACKOVERFLOW_NONE=n
@@ -256,6 +256,10 @@ CONFIG_PARTITION_TABLE_FILENAME="../partitions.csv"
 # USB MSC support
 #
 CONFIG_TINYUSB_MSC_ENABLED=y
+# 16 sectors per SD write instead of 1. The patched MSC driver writes
+# synchronously, so with 512 bytes every sector waited for the card on its own
+# and USB copies crawled at ~230 KB/s.
+CONFIG_TINYUSB_MSC_BUFSIZE=8192
 
 #
 # USB Host buffer bias — needed for UAC dongles with bInterval >= 2
@@ -263,3 +267,22 @@ CONFIG_TINYUSB_MSC_ENABLED=y
 CONFIG_USB_HOST_HW_BUFFER_BIAS_BALANCED=n
 CONFIG_USB_HOST_HW_BUFFER_BIAS_IN=n
 CONFIG_USB_HOST_HW_BUFFER_BIAS_PERIODIC_OUT=y
+
+#
+# Signed app images (phase 2, RED 3.3d / EN 18031-1 SUM-2)
+#
+# Every app binary carries an RSA-3072 signature block. esp_ota_end() and
+# esp_ota_set_boot_partition() refuse an image whose signature does not verify
+# against the public key in the running app, which closes both install routes:
+# over the air and straight off the SD card.
+#
+# This burns no eFuses and is reversible. It stops an attacker on the network,
+# not one holding the device with a USB cable; that boundary is a deliberate
+# choice, because owners are free to run their own builds.
+#
+CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT=y
+CONFIG_SECURE_SIGNED_APPS_RSA_SCHEME=y
+CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT=y
+CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=y
+# rg_tool.py overrides this placeholder from BLOCKBOY_SIGNING_KEY for new builds.
+CONFIG_SECURE_BOOT_SIGNING_KEY="blockboy_signing_key.pem"

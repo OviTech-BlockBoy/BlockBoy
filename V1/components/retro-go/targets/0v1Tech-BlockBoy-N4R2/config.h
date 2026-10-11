@@ -3,7 +3,7 @@
 
 // 0v1Tech BlockBoy branding
 #define RG_PROJECT_NAME            "BlockBoy"
-#define RG_PROJECT_VER             "V1-1.1.0"
+#define RG_PROJECT_VER             "V1-1.1.2"
 #define RG_PROJECT_WEBSITE         "http://blockboy.nl"
 #define RG_PROJECT_CREDITS         "BlockBoy by 0v1Tech\nBased on Retro-Go by ducalex\n"
 
@@ -15,7 +15,7 @@
 #define RG_OTA_MODEL "blockboy-v1-n4r2"
 
 // Semver, only used for comparing versions. Bump on every release.
-#define RG_FIRMWARE_VERSION "1.1.0"
+#define RG_FIRMWARE_VERSION "1.1.2"
 
 // Bump whenever the partition layout in rg_config.py changes.
 #define RG_LAYOUT_VERSION 1

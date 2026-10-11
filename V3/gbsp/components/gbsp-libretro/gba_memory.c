@@ -18,11 +18,13 @@
  */
 
 #include "common.h"
+#include "gba_profile.h"
 #include "streams/file_stream.h"
 #include "bios/open_gba_bios.h"
 
 #if defined(ESP_PLATFORM)
 #include "rg_storage.h"   /* rg_storage_rawrom_* (direct multi-block ROM page reads) */
+#include "esp_timer.h"
 #endif
 
 /* Sound */
@@ -2260,7 +2262,7 @@ static u8             *rp_stage;          /* 32KB PSRAM staging */
 static volatile u32    rp_stage_page;
 static volatile int    rp_stage_ready;
 static FILE           *rp_file;           /* separate ROM handle for the task */
-static SemaphoreHandle_t rp_mtx;          /* serialiseert SD-toegang + staging */
+static SemaphoreHandle_t rp_mtx;          /* serialises SD access + staging */
 static TaskHandle_t    rp_task;
 
 static void rom_prefetch_task(void *arg)
@@ -2285,7 +2287,7 @@ static void rom_prefetch_task(void *arg)
         if (fread(rp_stage + off, 4096, 1, rp_file) != 1) ok = 0;
       }
       else ok = 0;
-      xSemaphoreGive(rp_mtx);          /* hoofdpad mag ertussen */
+      xSemaphoreGive(rp_mtx);          /* the main path may run in between */
       if (!ok) break;
     }
     if (ok) { rp_stage_page = page; rp_stage_ready = 1; }
@@ -2339,6 +2341,8 @@ u8 *load_gamepak_page(u32 physical_index)
     return &gamepak_buffers[0][0];
 
 
+  uint32_t profile_start = gba_profile_begin();
+  if (gba_profile_current) gba_profile_current->pages[physical_index]++;
   u32 entry = evict_gamepak_page();
   u8 *swap_location = gamepak_page_ptr(entry);
 
@@ -2386,6 +2390,7 @@ u8 *load_gamepak_page(u32 physical_index)
   if (physical_index == 0)
     update_gpio_romregs();
 
+  gba_profile_end(GP_ROM, profile_start);
   return swap_location;
 }
 
@@ -2439,7 +2444,7 @@ void init_gamepak_buffer(void)
   }
 #endif
 
-  // total pages over alle (volle + evt. partiële) blokken
+  // total pages over all (full + any partial) blocks
   gamepak_total_pages = 0;
   for (i = 0; i < gamepak_buffer_count; i++)
     gamepak_total_pages += gamepak_block_pages[i];
@@ -2786,6 +2791,23 @@ unsigned memory_write_savestate(u8 *dst)
   return (unsigned int)(dst - startp);
 }
 
+/* Initial cache fill uses the same multi-sector path as later page faults.
+ * A raw read does not advance FILE's cursor, and may fail after a partial copy:
+ * always seek and overwrite the entire requested range on fallback.
+ * Return 1 = rawrom, 2 = stdio, 0 = unreadable. */
+static int gamepak_read_initial(u8 *dst, u32 offset, u32 len)
+{
+#if ROM_RAW_READ
+  if (g_rawrom && !((offset | len) & 0x1FFu) &&
+      rg_storage_rawrom_read(g_rawrom, offset, dst, len))
+    return 1;
+#endif
+  if (fseek(gamepak_file_large, offset, SEEK_SET) != 0 ||
+      fread(dst, 1, len, gamepak_file_large) != len)
+    return 0;
+  return 2;
+}
+
 static s32 load_gamepak_raw(const char *name)
 {
   unsigned i, j;
@@ -2807,11 +2829,17 @@ static s32 load_gamepak_raw(const char *name)
 #endif
   if(gamepak_file_large)
   {
-    // Round size to 32KB pages
-    fseek(gamepak_file_large, 0, SEEK_END);
-    gamepak_size = (u32)ftell(gamepak_file_large);
-    fseek(gamepak_file_large, 0, SEEK_SET);
-    gamepak_size = (gamepak_size + 0x7FFF) & ~0x7FFF;
+    // Keep the real length: raw sector reads must never run beyond the ROM.
+    if (fseek(gamepak_file_large, 0, SEEK_END) != 0)
+      goto load_fail;
+    long file_size = ftell(gamepak_file_large);
+    if (file_size <= 0 || file_size > 32 * 1024 * 1024 || !gamepak_buffer_count)
+      goto load_fail;
+    gamepak_size = ((u32)file_size + 0x7FFF) & ~0x7FFF;
+#if defined(ESP_PLATFORM)
+    int64_t load_start_us = esp_timer_get_time();
+    u32 raw_pages = 0, file_pages = 0;
+#endif
 
     // Load stuff in 1MB chunks
     u32 buf_blocks = (gamepak_size + gamepak_buffer_blocksize-1) / (gamepak_buffer_blocksize);
@@ -2828,9 +2856,23 @@ static s32 load_gamepak_raw(const char *name)
     for (i = 0; i < ldblks; i++)
     {
       u32 bp = gamepak_block_pages[i];
-      // Load the block (bp * 32KB; = 1MB for full blocks) and map it
-      fread(gamepak_buffers[i], 32 * 1024, bp, gamepak_file_large);
-      for (j = 0; j < bp && base_page + j < rom_blocks; j++)
+      if (bp > rom_blocks - base_page)
+        bp = rom_blocks - base_page;
+      u32 offset = base_page * (32 * 1024);
+      u32 bytes = bp * (32 * 1024);
+      if (bytes > (u32)file_size - offset)
+        bytes = (u32)file_size - offset;
+      int read_path = gamepak_read_initial(gamepak_buffers[i], offset, bytes);
+      if (!read_path)
+        goto load_fail;
+      // Deterministic padding for ROMs that end inside a 32KB cache page.
+      if (bytes < bp * (32 * 1024))
+        memset(gamepak_buffers[i] + bytes, 0, bp * (32 * 1024) - bytes);
+#if defined(ESP_PLATFORM)
+      if (read_path == 1) raw_pages += bp;
+      else file_pages += bp;
+#endif
+      for (j = 0; j < bp; j++)
       {
         u32 phyn = base_page + j;
         u8* blkptr = &gamepak_buffers[i][32 * 1024 * j];
@@ -2841,10 +2883,20 @@ static s32 load_gamepak_raw(const char *name)
       }
       base_page += bp;
     }
+#if defined(ESP_PLATFORM)
+    printf("[ROMLOAD] pages=%u raw=%u file=%u cache_us=%lld\n",
+           (unsigned)base_page, (unsigned)raw_pages, (unsigned)file_pages,
+           (long long)(esp_timer_get_time() - load_start_us));
+#endif
 
     return 0;
   }
 
+load_fail:
+#if ROM_RAW_READ
+  if (g_rawrom) { rg_storage_rawrom_close(g_rawrom); g_rawrom = NULL; }
+#endif
+  if (gamepak_file_large) { fclose(gamepak_file_large); gamepak_file_large = NULL; }
   return -1;
 }
 
@@ -2902,5 +2954,3 @@ fail:
   fclose(fd);
   return -1;
 }
-
-

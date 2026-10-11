@@ -7,7 +7,13 @@ must be uploaded as release assets.
 Usage (from the project directory, after a successful build):
 
     python rg_tool.py build-img all --target 0v1Tech-BlockBoy-N16R8
-    python tools/publish_update.py 3.1.0 --notes "GBA audio fix"
+    python tools/publish_update.py 3.1.0 --notes "USB mode bug fix" "GBA crash fix"
+
+Every --notes argument is one point. The device lists them under each other,
+each with a dash in front, above Yes and No. That box has room for six points
+of about 28 characters; this script measures them with the device's font and
+refuses notes that would not fit. (Firmware older than x.1.2 draws an older box
+with room for a single line, which only matters for the update to x.1.2.)
 
 Result in build/ota/:
     v3-n16r8.json     -> commit into the firmware repo under ota/
@@ -50,6 +56,62 @@ def read_config_value(target, name):
     return None
 
 
+def format_notes(points):
+    """One line per point, each starting with a dash."""
+    lines = []
+    for point in points:
+        for line in point.splitlines():
+            line = line.strip()
+            if line:
+                lines.append(line if line.startswith("-") else "- " + line)
+    return "\n".join(lines)
+
+
+def check_notes_fit(target, notes):
+    """Refuses notes the update box on the device cannot show.
+
+    Mirrors confirm_update() in launcher/main/updater.c and draw_dialog() in
+    rg_gui.c: the box is at most 82% x 74% of the visible screen, and the
+    versions, the notes, Yes and No all have to fit on one page. A point that
+    wraps takes two lines, so each point has to fit the width as well.
+    """
+    if len(notes.encode("utf-8")) > 255:
+        sys.exit("The notes are longer than the 255 bytes the device keeps.")
+
+    font_path = os.path.join("components", "retro-go", "fonts", "VeraBold11.c")
+    config_path = os.path.join("components", "retro-go", "targets", target, "config.h")
+    with open(font_path, encoding="utf-8", errors="replace") as f:
+        font = f.read()
+    with open(config_path, encoding="utf-8") as f:
+        margins = re.search(r"RG_SCREEN_VISIBLE_AREA\s+\{\s*(\d+),\s*(\d+),\s*(\d+),\s*(\d+)\s*\}", f.read())
+    left, top, right, bottom = (int(x) for x in margins.groups()) if margins else (0, 0, 0, 0)
+    screen_width = int(read_config_value(target, "RG_SCREEN_WIDTH")) - left - right
+    screen_height = int(read_config_value(target, "RG_SCREEN_HEIGHT")) - top - bottom
+
+    # Glyph records: code (2 bytes), y offset, width, height, x offset, advance, bitmap.
+    data = [int(x, 16) for x in re.findall(r"0x([0-9A-Fa-f]{2})", font[font.index(".data"):])]
+    advance, i = {}, 0
+    while i + 7 <= len(data) and (data[i] or data[i + 1]):
+        advance[data[i] | (data[i + 1] << 8)] = data[i + 6]
+        i += 7 + (data[i + 3] * data[i + 4] + 7) // 8
+
+    def width(text):
+        return 2 + sum(advance.get(ord(ch), 8) for ch in text)
+
+    line_height = int(re.search(r"\.height\s*=\s*(\d+)", font).group(1)) + 2
+    text_width = int(0.82 * screen_width) - width(": ") - 28
+    # Box height minus padding and title, minus one line each for the versions, Yes and No.
+    max_lines = (int(0.74 * screen_height) - 12 - (line_height + 4) - 3 * line_height) // line_height
+
+    lines = notes.split("\n") if notes else []
+    for line in lines:
+        if width(line) > text_width:
+            sys.exit("This point is %d px wide and the box holds %d px:\n  %s\nShorten it."
+                     % (width(line), text_width, line))
+    if len(lines) > max_lines:
+        sys.exit("%d points, but the update box on the device has room for %d." % (len(lines), max_lines))
+
+
 def sha256_file(path):
     digest = hashlib.sha256()
     with open(path, "rb") as f:
@@ -64,7 +126,8 @@ def main():
     parser.add_argument("--target", default="0v1Tech-BlockBoy-N16R8")
     parser.add_argument("--repo", default=DEFAULT_REPO, help="GitHub repo for the release assets")
     parser.add_argument("--tag", help="Release tag (default: v<version>)")
-    parser.add_argument("--notes", default="", help="Short text shown on the device")
+    parser.add_argument("--notes", nargs="*", default=[],
+                        help="What changed, one argument per point (up to 6 short points)")
     parser.add_argument("--date", help="Date in the release (default: today)")
     parser.add_argument("--manifest-name", help="Filename of the manifest")
     parser.add_argument(
@@ -77,7 +140,7 @@ def main():
     if not os.path.exists("rg_config.py"):
         sys.exit("Run this from the project directory (rg_config.py not found).")
 
-    config = {}
+    config = {"os": os}  # rg_config.py reads BLOCKBOY_SIGNING_KEY via os, like rg_tool.py provides
     with open("rg_config.py", "rb") as f:
         exec(f.read(), config)
 
@@ -94,6 +157,9 @@ def main():
             "Adjust config.h and rebuild, or publish version '%s'."
             % (built_version, args.version, built_version)
         )
+
+    notes = format_notes(args.notes)
+    check_notes_fit(args.target, notes)
 
     layout = int(read_config_value(args.target, "RG_LAYOUT_VERSION") or 1)
     model = read_config_value(args.target, "RG_OTA_MODEL")
@@ -154,7 +220,7 @@ def main():
         "model": model,
         "layout": layout,
         "date": date,
-        "notes": args.notes,
+        "notes": notes,
         "files": files,
     }
 

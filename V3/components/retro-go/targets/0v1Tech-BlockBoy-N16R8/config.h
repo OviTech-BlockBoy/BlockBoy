@@ -3,7 +3,7 @@
 
 // 0v1Tech BlockBoy branding
 #define RG_PROJECT_NAME            "BlockBoy"
-#define RG_PROJECT_VER             "V3-3.1.0"
+#define RG_PROJECT_VER             "V3-3.1.2"
 #define RG_PROJECT_WEBSITE         "http://blockboy.nl"
 #define RG_PROJECT_CREDITS         "BlockBoy by 0v1Tech\nBased on Retro-Go by ducalex\n"
 
@@ -27,7 +27,7 @@
 // Semver, purely for comparing versions. RG_PROJECT_VER above is the text the
 // user sees; it can't be sorted reliably.
 // Bump on EVERY release you publish.
-#define RG_FIRMWARE_VERSION "3.1.0"
+#define RG_FIRMWARE_VERSION "3.1.2"
 
 // Bump whenever the partition layout in rg_config.py changes. Devices then
 // refuse packages with a different layout -- those would land at the wrong
@@ -60,7 +60,15 @@
 // Lens crop / panel offset for the V3 ST7789 panel. Tuned on-device via the
 // "Screen position" menu. Keeps all drawing inside the lens opening so the
 // bright panel edges don't shine past the bezel. Visible area becomes 288x238.
-#define RG_SCREEN_VISIBLE_AREA      {24, 0, 8, 2} // Left, Top, Right, Bottom
+//
+// Left and right sum to the same 32px as before, so this is the picture moved
+// two pixels left inside an unchanged window, not a narrower one -- the lens is
+// not centred on the panel.
+//
+// Only the default. rg_display_init() lets a stored DispMargL/T/R/B override it,
+// so a console that has ever had these adjusted keeps its own values until
+// "Reset" in the Screen position menu puts it back on this line.
+#define RG_SCREEN_VISIBLE_AREA      {26, 0, 6, 2} // Left, Top, Right, Bottom
 #define RG_SCREEN_SAFE_AREA         {0, 0, 0, 0} // Left, Top, Right, Bottom
 
 // ST7789P3 init sequence — exact match of the manufacturer INI
@@ -198,6 +206,17 @@
 #define RG_GPIO_LCD_DC              GPIO_NUM_47
 #define RG_GPIO_LCD_BCKL            GPIO_NUM_39
 #define RG_GPIO_LCD_RST             GPIO_NUM_3
+// Panel supply switch: P-channel MOSFET (AO3401) high-side on the panel's VCC+IOVCC
+// (pins 8 and 9 are tied together on this board), gate straight on the GPIO, LOW = on.
+// Needs a 100k gate pull-down so the panel is powered by default during the ESP32's
+// boot, and a 4k7-10k bleeder from the switched rail to ground -- without the bleeder
+// the module's decoupling holds its charge and the rail never drops far enough to
+// reset the panel's internal power-on state, which is the entire point.
+// Comment this out on boards where the MOSFET is not fitted.
+// NOTE: collides with the right-hand DRV5055 of the OLD board revision (also GPIO7);
+// magnet_adc_count() in launcher/main/magnet_launch.c drops that channel when this
+// is defined.
+#define RG_GPIO_LCD_PWR             GPIO_NUM_7
 
 // SPI SD Card
 #define RG_GPIO_SDSPI_MISO          GPIO_NUM_9

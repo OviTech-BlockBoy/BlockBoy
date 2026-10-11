@@ -238,12 +238,9 @@ bool usb_msc_start(void)
         return false;
     }
 
-    // Mount the storage for USB access
-    ret = tinyusb_msc_storage_mount(RG_STORAGE_ROOT);
-    if (ret != ESP_OK) {
-        RG_LOGW("Failed to mount MSC storage (may be ok): 0x%x", ret);
-        // This is not fatal, the USB host will mount it
-    }
+    // No tinyusb_msc_storage_mount() here: mounting FAT on our side makes the
+    // card read-only for the PC. If the cable was already plugged in, the PC
+    // could get the disk first and its writes would then be refused.
 
     usb_msc_active = true;
     RG_LOGI("USB MSC mode started successfully!");

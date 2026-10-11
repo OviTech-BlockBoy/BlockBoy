@@ -74,6 +74,19 @@ const char *rg_relpath(const char *path);
 uint32_t rg_crc32(uint32_t crc, const uint8_t *buf, size_t len);
 uint32_t rg_hash(const char *buf, size_t len);
 
+/* Secrets */
+// Writes `len` random characters plus a terminator into `out`, so the buffer
+// needs len + 1 bytes. Characters come from an alphabet that drops the pairs
+// customers misread off a small screen (0/O, 1/l/I, 5/S, 8/B).
+// Use this for anything that has to differ per device: a credential baked into
+// the source is public the moment the source is, which for this project is
+// always. The alphabet has 27 symbols, so 12 characters carry about 57 bits.
+void rg_random_secret(char *out, size_t len);
+// Compares two secrets without giving away, through how long it takes, how many
+// leading characters were right. Lengths are still compared normally: ours are a
+// fixed length we picked, so that leaks nothing.
+bool rg_secret_equal(const char *a, const char *b);
+
 /* Misc */
 void *rg_alloc(size_t size, uint32_t caps);
 // rg_usleep behaves like usleep in libc: it will sleep for *at least* `us` microseconds, but possibly more

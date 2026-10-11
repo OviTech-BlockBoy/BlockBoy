@@ -17,6 +17,44 @@ static QueueHandle_t spi_buffers;
 #define SPI_BUFFER_COUNT      (5)
 #define SPI_BUFFER_LENGTH     (LCD_BUFFER_LENGTH * 2)
 
+// Clock used for the reset + init sequence, before the bus is handed over to the
+// frame pipeline at RG_SCREEN_SPEED. Pixel data at 80MHz sits at the edge of what
+// the ST7789 accepts and a bad pixel costs one frame; a single mangled init byte
+// leaves the panel black for the entire session, so the ~60 bytes that configure
+// the panel are sent slow. Init takes microseconds either way.
+#ifndef RG_SCREEN_INIT_SPEED
+#define RG_SCREEN_INIT_SPEED (10 * 1000 * 1000)
+#endif
+
+// Blind re-runs of reset + init when the module can't be read back (see lcd_init).
+#ifndef RG_SCREEN_BLIND_INIT_RETRIES
+#define RG_SCREEN_BLIND_INIT_RETRIES (1)
+#endif
+
+// Panel supply switch timings (see lcd_power_init). 200ms off is what the manual
+// switch test used; the bleeder resistor on the panel rail needs roughly 4 time
+// constants to get it down, and there is no reason to cut it fine.
+#ifndef RG_LCD_PWR_OFF_US
+#define RG_LCD_PWR_OFF_US (200 * 1000)
+#endif
+#ifndef RG_LCD_PWR_SETTLE_US
+#define RG_LCD_PWR_SETTLE_US (50 * 1000)
+#endif
+
+// Set while the init sequence runs: the rg_spi task that recycles queued
+// transaction descriptors is not started until init is done, so those transfers
+// go out synchronously instead of through the queue.
+static bool spi_polling_mode = false;
+static int spi_clock_hz = 0;
+
+// rg_spi is the only thing that returns transaction descriptors to the pool. If it
+// ever exits, every later display write starves -- so its state is tracked and its
+// exit is logged instead of being lost.
+static volatile bool spi_task_alive = false;
+
+// Defined further down (it needs the transaction pool), used by spi_deinit above it.
+static void spi_drain(void);
+
 static inline uint16_t *spi_take_buffer(void)
 {
     uint16_t *buffer;
@@ -35,8 +73,34 @@ static inline void spi_queue_transaction(const void *data, size_t length, uint32
     if (!data || !length)
         return;
 
+    if (spi_polling_mode)
+    {
+        // Blocking transfer. Bit 1 of `type` means "buffer came from the pool" and is
+        // cleared here: nothing hands it back during init, and we never take one.
+        static uint8_t polling_buffer[64] __attribute__((aligned(4)));
+        RG_ASSERT(length <= sizeof(polling_buffer), "init transfer too large for polling buffer");
+        memcpy(polling_buffer, data, length);
+        spi_transaction_t t = {
+            .tx_buffer = polling_buffer,
+            .length = length * 8, // In bits
+            .user = (void *)(uintptr_t)(type & 1),
+        };
+        if (spi_device_polling_transmit(spi_dev, &t) != ESP_OK)
+            RG_LOGE("Init transfer failed\n");
+        return;
+    }
+
+    // Bounded like the buffer pool above. An unbounded wait here is invisible: the
+    // two neighbouring waits (spi_take_buffer, spi_device_queue_trans) both panic
+    // with a message after 2.5s, but this one used to be portMAX_DELAY, so if rg_spi
+    // ever stops handing descriptors back the caller parks here forever without a
+    // single line of output.
     spi_transaction_t *t;
-    xQueueReceive(spi_transactions, &t, portMAX_DELAY);
+    if (xQueueReceive(spi_transactions, &t, pdMS_TO_TICKS(2500)) != pdTRUE)
+    {
+        RG_LOGE("SPI transaction pool starved (rg_spi alive=%d)\n", (int)spi_task_alive);
+        RG_PANIC("display");
+    }
 
     *t = (spi_transaction_t){
         .tx_buffer = NULL,
@@ -77,13 +141,35 @@ IRAM_ATTR
 static void spi_task(void *arg)
 {
     spi_transaction_t *t;
+    esp_err_t err;
 
-    while (spi_device_get_trans_result(spi_dev, &t, portMAX_DELAY) == ESP_OK)
+    spi_task_alive = true;
+
+    while ((err = spi_device_get_trans_result(spi_dev, &t, portMAX_DELAY)) == ESP_OK)
     {
         if ((int)t->user & 2)
             spi_give_buffer((uint16_t *)t->tx_buffer);
         xQueueSend(spi_transactions, &t, portMAX_DELAY);
     }
+
+    spi_task_alive = false;
+    RG_LOGE("rg_spi exiting: spi_device_get_trans_result returned 0x%X. Display is now stalled!\n", err);
+}
+
+static void spi_add_device(int clock_hz)
+{
+    const spi_device_interface_config_t devcfg = {
+        .clock_speed_hz = clock_hz,          // Typically SPI_MASTER_FREQ_40M or SPI_MASTER_FREQ_80M
+        .mode = 0,                           // SPI mode 0
+        .spics_io_num = RG_GPIO_LCD_CS,      // CS pin
+        .queue_size = SPI_TRANSACTION_COUNT, // We want to be able to queue 5 transactions at a time
+        .pre_cb = &spi_pre_transfer_cb,      // Specify pre-transfer callback to handle D/C line and SPI lock
+        .flags = SPI_DEVICE_NO_DUMMY,        // SPI_DEVICE_HALFDUPLEX;
+    };
+
+    esp_err_t ret = spi_bus_add_device(RG_SCREEN_HOST, &devcfg, &spi_dev);
+    RG_ASSERT(ret == ESP_OK, "spi_bus_add_device failed.");
+    spi_clock_hz = clock_hz;
 }
 
 static void spi_init(void)
@@ -111,31 +197,50 @@ static void spi_init(void)
         .quadhd_io_num = -1,
     };
 
-    const spi_device_interface_config_t devcfg = {
-        .clock_speed_hz = RG_SCREEN_SPEED,   // Typically SPI_MASTER_FREQ_40M or SPI_MASTER_FREQ_80M
-        .mode = 0,                           // SPI mode 0
-        .spics_io_num = RG_GPIO_LCD_CS,      // CS pin
-        .queue_size = SPI_TRANSACTION_COUNT, // We want to be able to queue 5 transactions at a time
-        .pre_cb = &spi_pre_transfer_cb,      // Specify pre-transfer callback to handle D/C line and SPI lock
-        .flags = SPI_DEVICE_NO_DUMMY,        // SPI_DEVICE_HALFDUPLEX;
-    };
-
     esp_err_t ret;
 
     // Initialize the SPI bus
     ret = spi_bus_initialize(RG_SCREEN_HOST, &buscfg, SPI_DMA_CH_AUTO);
     RG_ASSERT(ret == ESP_OK || ret == ESP_ERR_INVALID_STATE, "spi_bus_initialize failed.");
 
-    ret = spi_bus_add_device(RG_SCREEN_HOST, &devcfg, &spi_dev);
-    RG_ASSERT(ret == ESP_OK, "spi_bus_add_device failed.");
+    // Comes up at the slow init clock; lcd_init() raises it to RG_SCREEN_SPEED once
+    // the panel is configured. No rg_spi task yet -- init runs in polling mode.
+    spi_polling_mode = true;
+    spi_add_device(RG_SCREEN_INIT_SPEED);
+}
 
+// Swaps the device out for one clocked at `clock_hz`. Only legal while nothing is
+// in flight and the rg_spi task is not running, i.e. during lcd_init().
+static void spi_set_speed(int clock_hz)
+{
+    if (clock_hz == spi_clock_hz)
+        return;
+    if (spi_bus_remove_device(spi_dev) != ESP_OK)
+    {
+        RG_LOGE("Failed to switch SPI clock to %dHz, staying at %dHz\n", clock_hz, spi_clock_hz);
+        return;
+    }
+    spi_add_device(clock_hz);
+}
+
+// Hands the bus over to the frame pipeline: full clock, queued transactions again.
+static void spi_start_task(void)
+{
+    spi_set_speed(RG_SCREEN_SPEED);
+    spi_polling_mode = false;
     rg_task_create("rg_spi", &spi_task, NULL, 1.5 * 1024, RG_TASK_PRIORITY_7, 1);
 }
 
 static void spi_deinit(void)
 {
-    // When transactions are still in flight, spi_bus_remove_device fails and spi_bus_free then crashes.
-    // The real solution would be to wait for transactions to be done, but this is simpler for now...
+    // Wait for every queued transaction to actually complete first. Without this the
+    // teardown logged "Have unfinished transactions" / "Failed to properly terminate
+    // SPI driver!" on every app switch and left the peripheral and its DMA chain
+    // mid-transfer -- and an app switch here is a RTC_SW_CPU_RST, which does not
+    // reset those. The next boot then inherits a half-finished transfer.
+    // (This is the "real solution" the old comment here said was left for later.)
+    spi_drain();
+
     if (spi_bus_remove_device(spi_dev) == ESP_OK)
         spi_bus_free(RG_SCREEN_HOST);
     else
@@ -413,13 +518,17 @@ static void lcd_gscan_test(void)
 //   type 1 = ILI9341   (V2 screen)
 static void lcd_reinit_display(int type)
 {
+    // spi_drain() after each timed command: queueing is asynchronous, so without it
+    // the delay starts before the panel has even seen the byte (see lcd_send_init_sequence).
     ILI9341_CMD(0x01);        // Software Reset
+    spi_drain();
     rg_usleep(120 * 1000);    // Datasheet: up to 120ms before next command
 
     if (type == 0) {
         // ST7789P3 — factory INI order: Sleep Out BEFORE register writes.
         // Verbatim from V3 config.h RG_SCREEN_INIT (= manufacturer INI, MADCTL 0x60).
         ILI9341_CMD(0x11);        // Sleep Out
+        spi_drain();
         rg_usleep(120 * 1000);
         ILI9341_CMD(0x3A, 0x05);  // Pixel Format: RGB565
         ILI9341_CMD(0x36, 0x60);
@@ -462,8 +571,10 @@ static void lcd_reinit_display(int type)
     }
 
     ILI9341_CMD(0x11);        // Sleep Out
+    spi_drain();
     rg_usleep(120 * 1000);    // Datasheet: 120ms for supply voltages/clocks to stabilize
     ILI9341_CMD(0x29);        // Display ON
+    spi_drain();
 }
 
 // === Software per-channel color correction ===
@@ -635,6 +746,84 @@ static void lcd_send_init_sequence(void)
     spi_drain();
 }
 
+#if defined(RG_GPIO_LCD_PWR)
+// Panel supply switch: P-channel MOSFET on RG_GPIO_LCD_PWR, LOW = on (same inverted
+// logic as the backlight MOSFET).
+//
+// Why this exists: the ST7789P3 sometimes latches an internal power-on state that RESX
+// cannot clear. Measured on hardware, with the board left powered throughout: pulling
+// the panel's FPC and reconnecting it recovers a black screen, while a RESX pulse plus
+// a full re-init does not. Only removing the panel's own supply works. So every cold
+// start now begins with a firmware-timed power cycle, with the rest of the board
+// already settled instead of everything ramping at once.
+//
+// The data lines are parked low for the duration. An output left high feeds the panel
+// through its ESD clamp diodes and holds its rail near 2.6V -- right at the datasheet's
+// 2.65V minimum for VCC, so the internal POR never sees a real power-down and the whole
+// exercise achieves nothing.
+static void lcd_power_init(bool cycle)
+{
+    uint64_t pins = 1ULL << RG_GPIO_LCD_PWR;
+    if (cycle)
+    {
+        pins |= (1ULL << RG_GPIO_LCD_DC) | (1ULL << RG_GPIO_LCD_CS)
+              | (1ULL << RG_GPIO_LCD_CLK) | (1ULL << RG_GPIO_LCD_MOSI);
+    #if defined(RG_GPIO_LCD_RST)
+        pins |= 1ULL << RG_GPIO_LCD_RST;
+    #endif
+    }
+
+    gpio_config(&(gpio_config_t){
+        .pin_bit_mask = pins,
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    });
+
+    // Showcase transition: the panel is holding the loading image from before the
+    // reboot. Cutting its supply would wipe it, which is the one thing that flow
+    // exists to avoid. Just make sure the switch is driven on instead of floating.
+    if (!cycle)
+    {
+        gpio_set_level(RG_GPIO_LCD_PWR, 0);
+        return;
+    }
+
+    gpio_set_level(RG_GPIO_LCD_DC, 0);
+    gpio_set_level(RG_GPIO_LCD_CS, 0);
+    gpio_set_level(RG_GPIO_LCD_CLK, 0);
+    gpio_set_level(RG_GPIO_LCD_MOSI, 0);
+#if defined(RG_GPIO_LCD_RST)
+    gpio_set_level(RG_GPIO_LCD_RST, 0);
+#endif
+
+    gpio_set_level(RG_GPIO_LCD_PWR, 1); // off
+    rg_usleep(RG_LCD_PWR_OFF_US);
+    gpio_set_level(RG_GPIO_LCD_PWR, 0); // on
+    rg_usleep(RG_LCD_PWR_SETTLE_US);
+
+    RG_LOGI("Panel power cycled (%dms off, %dms settle)\n",
+            RG_LCD_PWR_OFF_US / 1000, RG_LCD_PWR_SETTLE_US / 1000);
+}
+#endif
+
+// The user-tuned panel drive registers. Called from lcd_init() while the bus is still
+// at RG_SCREEN_INIT_SPEED and the transfers are synchronous. These four control the
+// panel's analog drive (VCOM, VCOM offset, VRH, frame rate); if one of them lands
+// wrong the panel stays powered and keeps accepting pixels at full frame rate while
+// the glass shows nothing -- the console looks alive over serial and dead in the hand.
+// They used to be written from rg_display_init() *after* lcd_init() had already
+// switched the bus to RG_SCREEN_SPEED, which is the one part of panel configuration
+// that was still going out at 80MHz.
+static void lcd_apply_panel_tuning(void)
+{
+    lcd_set_vcom(display_init_vcom);
+    lcd_set_vcom_offset(display_init_vcom_offset);
+    lcd_set_vrh(display_init_vrh);
+    lcd_set_framerate(display_init_framerate);
+}
+
 static void lcd_init(void)
 {
 #ifdef RG_GPIO_LCD_BCKL
@@ -659,6 +848,11 @@ static void lcd_init(void)
     });
 #endif
 
+#if defined(RG_GPIO_LCD_PWR)
+    // Before anything touches the bus: give the panel a clean supply of its own.
+    lcd_power_init(!display_preserve);
+#endif
+
     spi_init();
 
     // Setup Data/Command line. gpio_config() rather than gpio_set_direction() for
@@ -677,33 +871,70 @@ static void lcd_init(void)
     // image in GRAM (a SW reboot doesn't power-cycle it). Skip the reset/init below
     // (which would wipe the image) so it stays on screen for a flash-free switch.
     if (display_preserve)
+    {
+        lcd_apply_panel_tuning();
+        spi_start_task();
         return;
+    }
+
+    // Let the panel's own power-on reset finish before we talk to it. We get here a
+    // few hundred ms after the rail comes up, and the 3V3 rail has little margin on
+    // this board: a module whose internal POR threshold sits at the high end of the
+    // batch spread can still be holding itself in reset when the first RESX pulse
+    // and init sequence go past, and then ignores the lot -- backlight lit, glass
+    // black, for the whole session. Costs 100ms of boot time on every unit.
+    rg_usleep(100 * 1000);
 
     // Reset + init, verified. A panel that came out of a marginal power-up can sit
     // there ignoring the whole sequence: the backlight is lit but the glass stays
     // black, and nothing on screen ever appears again for that session. Read the
-    // power mode back and redo the reset when it did not take. Only meaningful if
-    // the module answers reads at all -- if it does not we send the sequence once
-    // and hope for the best, exactly like before.
-    bool verify = false;
-    for (int attempt = 1; attempt <= 3; ++attempt)
+    // power mode back and redo the reset when it did not take.
+    //
+    // When the module does not answer register reads there is nothing to check, so
+    // instead of sending the sequence once and hoping, we blindly repeat the whole
+    // reset + init RG_SCREEN_BLIND_INIT_RETRIES extra times. That is exactly what
+    // the user's power cycle does by hand, and it is the only recovery available
+    // without readback. ~550ms per extra pass, once per boot.
+    bool verify = false, panel_on = false;
+    int attempt = 1, max_attempts = 3;
+    for (;; ++attempt)
     {
         lcd_hw_reset();
         lcd_send_init_sequence();
 
         if (attempt == 1)
-            verify = lcd_readback_works();
-        if (!verify)
-            break;
-
-        if (lcd_panel_is_on())
         {
-            if (attempt > 1)
-                RG_LOGW("Panel needed %d init attempts to come up\n", attempt);
-            break;
+            verify = lcd_readback_works();
+            if (!verify)
+                max_attempts = 1 + RG_SCREEN_BLIND_INIT_RETRIES;
         }
-        RG_LOGE("Panel did not come up (attempt %d/3), resetting and retrying...\n", attempt);
+
+        if (verify)
+        {
+            if ((panel_on = lcd_panel_is_on()))
+                break;
+            RG_LOGE("Panel did not come up (attempt %d/%d), resetting and retrying...\n", attempt, max_attempts);
+        }
+
+        if (attempt >= max_attempts)
+            break;
     }
+
+    if (!verify)
+        RG_LOGI("Panel init sent %d times (no readback on this module, so unverifiable)\n", attempt);
+    else if (!panel_on)
+        RG_LOGE("Panel never came up after %d attempts!\n", attempt);
+    else if (attempt > 1)
+        RG_LOGW("Panel init took %d attempts\n", attempt);
+
+    // Non-default panel type: replace the sequence we just sent with the right one,
+    // still at the slow init clock (this is why it happens here and not in
+    // rg_display_init() after lcd_init() returns).
+    if (display_init_type != 0)
+        lcd_reinit_display(display_init_type);
+
+    lcd_apply_panel_tuning();
+    spi_start_task();
 }
 
 static void lcd_deinit(void)

@@ -41,32 +41,50 @@ typedef struct
 
 // -----------------------------------------------------------------------------
 
-// Compares "3.10.2"-style versions numerically per component. A string
-// comparison would call "3.9.0" newer than "3.10.0".
-static int version_compare(const char *a, const char *b)
+// Asks whether to install the update. The box shows both versions on one line,
+// then the release notes with one point per line, then Yes and No.
+//
+// Everything has to fit on a single page. The notes are message rows the cursor
+// cannot reach, so rows pushed to a second page would never be seen -- and it is
+// Yes and No that get pushed. The page holds nine lines in the default font,
+// which leaves six for the notes, each about 28 characters wide; points that no
+// longer fit are dropped from the end. The measurements mirror draw_dialog() in
+// rg_gui.c: the box is at most 82% x 74% of the screen, with 12px of padding
+// and a title row.
+static bool confirm_update(const char *title, const manifest_t *manifest)
 {
-    while (*a || *b)
+    enum { MAX_POINTS = 8 };
+    rg_gui_option_t options[MAX_POINTS + 4];
+    char versions[80];
+    char notes[sizeof(manifest->notes)];
+    size_t count = 0;
+
+    snprintf(versions, sizeof(versions), "%s  ->  %s", RG_FIRMWARE_VERSION, manifest->version);
+    snprintf(notes, sizeof(notes), "%s", manifest->notes);
+
+    const int line_height = TEXT_RECT(" ", 0).height;
+    const int text_width = (int)(0.82f * rg_display_get_width()) - TEXT_RECT(": ", 0).width - 28;
+    // What is left for the versions and the notes once Yes and No have their lines.
+    int room = (int)(0.74f * rg_display_get_height()) - 12 - (line_height + 4) - 2 * line_height;
+
+    options[count++] = (rg_gui_option_t){0, versions, NULL, RG_DIALOG_FLAG_MESSAGE, NULL};
+    room -= TEXT_RECT(versions, text_width).height;
+
+    for (char *point = strtok(notes, "\r\n"); point && count <= MAX_POINTS; point = strtok(NULL, "\r\n"))
     {
-        int na = 0, nb = 0;
-
-        while (*a >= '0' && *a <= '9')
-            na = na * 10 + (*a++ - '0');
-        while (*b >= '0' && *b <= '9')
-            nb = nb * 10 + (*b++ - '0');
-
-        if (na != nb)
-            return na < nb ? -1 : 1;
-
-        // Skip the separator; anything that is not a digit counts as a boundary.
-        while (*a && (*a < '0' || *a > '9'))
-            a++;
-        while (*b && (*b < '0' || *b > '9'))
-            b++;
+        int height = TEXT_RECT(point, text_width).height;
+        if (height > room)
+            break;
+        room -= height;
+        options[count++] = (rg_gui_option_t){0, point, NULL, RG_DIALOG_FLAG_MESSAGE, NULL};
     }
-    return 0;
-}
 
-// -----------------------------------------------------------------------------
+    options[count++] = (rg_gui_option_t){1, _("Yes"), NULL, RG_DIALOG_FLAG_NORMAL, NULL};
+    options[count++] = (rg_gui_option_t){0, _("No"), NULL, RG_DIALOG_FLAG_NORMAL, NULL};
+    options[count] = (rg_gui_option_t)RG_DIALOG_END;
+
+    return rg_gui_dialog(title, options, -2) == 1;
+}
 
 // Returns the manifest URL and reports whether it came from the test override.
 //
@@ -80,6 +98,27 @@ static bool get_manifest_url(char *out, size_t len)
 
     if (override && override[0])
     {
+        // https only. The override lives on the SD card, which the file server
+        // can write to, so a plain http address would be a way to point the
+        // device at someone else's firmware -- and the checksums it would be
+        // verified against come out of that same manifest. TLS is what makes
+        // the source trustworthy here; without it there is nothing left.
+        // The workbench server in tools/serve_ota.py speaks http, so a build
+        // made specifically for testing can opt out. Deliberately a compile-time
+        // flag and not a setting: nothing on the SD card can turn this on, and
+        // it is set in no shipped configuration. Grep for it before releasing.
+#ifndef RG_OTA_ALLOW_INSECURE_MANIFEST
+        if (strncmp(override, "https://", 8) != 0)
+        {
+            RG_LOGE("Ignoring manifest URL override, not https: '%s'", override);
+            free(override);
+            snprintf(out, len, "%s", RG_OTA_MANIFEST_URL);
+            return false;
+        }
+#else
+        RG_LOGE("*** RG_OTA_ALLOW_INSECURE_MANIFEST build: updates are NOT authenticated ***");
+#endif
+
         RG_LOGW("Manifest URL overridden via config: '%s'", override);
         snprintf(out, len, "%s", override);
         free(override);
@@ -429,6 +468,74 @@ static bool download_update(const manifest_t *manifest)
 
 // -----------------------------------------------------------------------------
 
+// Below this battery level an update is refused. Losing power halfway does no
+// lasting harm -- the flasher picks the job up again at the next power-on -- but
+// a unit that dies in the middle of an install looks broken to its owner. This
+// hardware cannot see the charger; on the charger the battery reads high enough
+// to pass, so plugging in is always the way past this.
+#define UPDATE_MIN_BATTERY 50
+
+// The version the owner answered No to. The automatic check stays quiet about
+// that one; Options > Firmware update still offers it.
+#define SETTING_DECLINED "Declined"
+
+static bool battery_allows_update(void)
+{
+    rg_battery_t battery = rg_input_read_battery();
+
+    if (!battery.present || battery.charging || battery.level >= UPDATE_MIN_BATTERY)
+        return true;
+
+    char message[128];
+    snprintf(message, sizeof(message),
+             _("Battery too low to update.\nCharge it to %d%% or\nconnect the charger."), UPDATE_MIN_BATTERY);
+    rg_gui_alert(_("Firmware Update"), message);
+    return false;
+}
+
+// Asks, and installs on Yes. Takes ownership of the manifest and only returns
+// when no update was started.
+static void offer_update(manifest_t *manifest, bool is_test_source)
+{
+    if (!confirm_update(is_test_source ? "Update Available [TEST]" : _("Update Available"), manifest))
+    {
+        rg_settings_set_string(RG_OTA_SETTINGS_NS, SETTING_DECLINED, manifest->version);
+        rg_settings_commit();
+        free(manifest);
+        return;
+    }
+
+    if (!battery_allows_update())
+    {
+        free(manifest);
+        return;
+    }
+
+    if (!rg_storage_ready())
+    {
+        rg_gui_alert(_("Update failed"), _("No SD card.\nThe update is stored\nthere first."));
+        free(manifest);
+        return;
+    }
+
+    bool ready = download_update(manifest);
+    free(manifest);
+
+    if (!ready)
+    {
+        gui_redraw();
+        return;
+    }
+
+    // From here on everything is downloaded and verified. The flasher takes
+    // over; it lives in the factory partition and finds the job again by
+    // itself if the power drops halfway.
+    rg_gui_draw_message("%s", _("Restarting to install..."));
+    rg_task_delay(1200);
+
+    rg_system_switch_app(RG_OTA_FLASHER_PARTITION, "flasher", "", 0);
+}
+
 void updater_show_dialog(void)
 {
     char error[128] = {0};
@@ -477,7 +584,7 @@ void updater_show_dialog(void)
         return;
     }
 
-    if (version_compare(RG_FIRMWARE_VERSION, manifest->version) >= 0)
+    if (rg_ota_version_compare(RG_FIRMWARE_VERSION, manifest->version) >= 0)
     {
         char uptodate[128];
         snprintf(uptodate, sizeof(uptodate), "%s\n\n%s %s", _("You are up to date."),
@@ -487,44 +594,106 @@ void updater_show_dialog(void)
         return;
     }
 
-    char message[512];
-    snprintf(message, sizeof(message),
-             "%s %s\n%s %s\n\n%s\n\n%s %d MB",
-             _("Installed:"), RG_FIRMWARE_VERSION,
-             _("Available:"), manifest->version,
-             manifest->notes,
-             _("Download:"), (int)((manifest->download_bytes + 524288) / 1048576));
+    offer_update(manifest, is_test_source);
+}
 
-    if (!rg_gui_confirm(is_test_source ? "Update Available [TEST]" : _("Update Available"),
-                        message, true))
+// -----------------------------------------------------------------------------
+
+// Automatic check. Once per launcher start, as soon as Wi-Fi is up, a background
+// task fetches the manifest; when it holds a newer version the main loop shows
+// the same prompt as Options > Firmware update. Every failure here is silent:
+// the check is a courtesy, and the menu entry tells whoever asks what is wrong.
+
+enum { CHECK_IDLE, CHECK_RUNNING, CHECK_FOUND, CHECK_DONE };
+
+static struct
+{
+    volatile int state;
+    manifest_t *manifest;
+    bool is_test_source;
+    char url[256];
+} auto_check;
+
+static void auto_check_task(void *arg)
+{
+    char error[128];
+    char *json_text = http_get_text(auto_check.url, 16 * 1024);
+    manifest_t *manifest = json_text ? calloc(1, sizeof(*manifest)) : NULL;
+
+    if (manifest && parse_manifest(json_text, manifest, error, sizeof(error)) &&
+        rg_ota_version_compare(RG_FIRMWARE_VERSION, manifest->version) < 0)
     {
-        free(manifest);
-        return;
+        auto_check.manifest = manifest;
+        manifest = NULL;
     }
 
-    if (!rg_storage_ready())
-    {
-        rg_gui_alert(_("Update failed"), _("No SD card.\nThe update is stored\nthere first."));
-        free(manifest);
-        return;
-    }
-
-    bool ready = download_update(manifest);
     free(manifest);
+    free(json_text);
+    auto_check.state = auto_check.manifest ? CHECK_FOUND : CHECK_DONE;
+}
 
-    if (!ready)
+bool updater_poll(bool idle)
+{
+    if (auto_check.state == CHECK_IDLE)
     {
-        gui_redraw();
-        return;
+        // Looked at every two seconds, and only during the first minute. Asking for
+        // the network state makes the Wi-Fi driver log a warning for as long as it
+        // is not connected, and a unit that has not found its network by then is
+        // not going to this time; the next start of the launcher tries again.
+        static int64_t next_look = 0;
+        int64_t now = rg_system_timer();
+
+        if (now < next_look)
+            return false;
+        next_look = now + 2000000;
+
+        if (now > 60000000)
+        {
+            auto_check.state = CHECK_DONE;
+            return false;
+        }
+
+        if (rg_network_get_info().state != RG_NETWORK_CONNECTED)
+            return false;
+
+        // The settings are read here, in the main task. The background task only
+        // does the network part, on a stack of its own: TLS needs more than the
+        // main task has left.
+        auto_check.is_test_source = get_manifest_url(auto_check.url, sizeof(auto_check.url));
+        auto_check.state = CHECK_RUNNING;
+        if (!rg_task_create("update_check", &auto_check_task, NULL, 10 * 1024, RG_TASK_PRIORITY_2, -1))
+            auto_check.state = CHECK_DONE;
+        return false;
     }
 
-    // From here on everything is downloaded and verified. The flasher takes
-    // over; it lives in the factory partition and finds the job again by
-    // itself if the power drops halfway.
-    rg_gui_draw_message("%s", _("Restarting to install..."));
-    rg_task_delay(1200);
+    // Wait for a quiet moment, so the prompt does not swallow a key press that
+    // was meant for the menu.
+    if (auto_check.state != CHECK_FOUND || !idle)
+        return false;
 
-    rg_system_switch_app(RG_OTA_FLASHER_PARTITION, "flasher", "", 0);
+    manifest_t *manifest = auto_check.manifest;
+    auto_check.manifest = NULL;
+    auto_check.state = CHECK_DONE;
+
+    char *declined = rg_settings_get_string(RG_OTA_SETTINGS_NS, SETTING_DECLINED, NULL);
+    bool skip = declined && strcmp(declined, manifest->version) == 0;
+    free(declined);
+
+    if (skip)
+    {
+        free(manifest);
+        return false;
+    }
+
+    offer_update(manifest, auto_check.is_test_source);
+    return true;
+}
+
+#else
+
+bool updater_poll(bool idle)
+{
+    return false;
 }
 
 #endif // RG_ENABLE_NETWORKING && RG_UPDATER_ENABLE

@@ -99,6 +99,72 @@ def build_firmware(output_file, apps, fw_format="odroid-go", fatsize=0):
     run(args)
 
 
+def espsecure_command():
+    """How to invoke espsecure here.
+
+    Inside a proper ESP-IDF shell the running interpreter has it. When rg_tool
+    is driven by some other Python (a stubbed build, an editor, an agent), fall
+    back to the copy that ships with ESP-IDF itself.
+    """
+    candidates = [
+        [sys.executable, "-m", "espsecure"],
+        ["espsecure"],  # console script, on PATH in an ESP-IDF shell
+        ["python", os.path.join(IDF_PATH, "components", "esptool_py", "esptool", "espsecure.py")],
+    ]
+    for cmd in candidates:
+        try:
+            if subprocess.run(cmd + ["--help"], capture_output=True).returncode == 0:
+                return cmd
+        except OSError:
+            continue  # not installed under this interpreter, try the next one
+    exit("\nERROR: espsecure is not available, so app images cannot be signed "
+         "or checked.\nRun this from an ESP-IDF shell.\n")
+
+
+def ensure_signed(app, binary):
+    """Every app in the image must carry a valid RSA-3072 signature block.
+
+    The flasher on the device verifies that block before it writes anything, so
+    an unsigned app would install nowhere. Most apps are signed by the build
+    itself (CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES). gbsp cannot be: linking
+    the verification code costs 256 bytes of DRAM it does not have next to the
+    GBA buffers, so it is built without and signed here instead.
+
+    This is deliberately a check on EVERY app and not a step you have to
+    remember for one of them. Forgetting is the failure mode this guards
+    against, so a binary that will not verify stops the build rather than
+    producing an image that quietly cannot be installed.
+    """
+    if not os.path.exists(SIGNING_KEY):
+        exit("\nERROR: signing key '%s' not found.\nEvery app image has to be "
+             "signed with it or the device will refuse the update.\n"
+             "Set BLOCKBOY_SIGNING_KEY to the private key outside the source tree.\n" % SIGNING_KEY)
+
+    espsecure = espsecure_command()
+
+    def verifies():
+        return subprocess.run(espsecure + ["verify_signature", "--version", "2",
+                                           "--keyfile", SIGNING_KEY, binary],
+                              capture_output=True).returncode == 0
+
+    if verifies():
+        return
+
+    print("  %-12s not signed by the build, signing now" % app)
+    # Signed into a separate file and swapped in afterwards: espsecure refuses to
+    # write its output over the input it is still reading.
+    tmp = binary + ".signed"
+    signed = subprocess.run(espsecure + ["sign_data", "--version", "2",
+                                         "--keyfile", SIGNING_KEY,
+                                         "--output", tmp, binary], capture_output=True)
+    if signed.returncode == 0 and os.path.exists(tmp):
+        os.replace(tmp, binary)
+
+    if not verifies():
+        output = (signed.stdout + signed.stderr).decode(errors="replace").strip()
+        exit("\nERROR: could not sign '%s'.\n%s\n" % (app, output))
+
+
 def build_image(output_file, apps, img_format="esp32", fatsize=0):
     PAD = bytes([0xFF])
     print("Building image with: %s\n" % " ".join(apps))
@@ -111,7 +177,9 @@ def build_image(output_file, apps, img_format="esp32", fatsize=0):
     ]
 
     for app in apps:
-        with open(os.path.join(app, "build", app + ".bin"), "rb") as f:
+        app_bin = os.path.join(app, "build", app + ".bin")
+        ensure_signed(app, app_bin)
+        with open(app_bin, "rb") as f:
             data = f.read()
         # The layout is frozen for OTA (see rg_config.py). Never grow it
         # silently: that shifts everything behind it and breaks OTA on devices
@@ -138,6 +206,7 @@ def build_image(output_file, apps, img_format="esp32", fatsize=0):
         fl_name, fl_size = PROJECT_FLASHER
         fl_bin = os.path.join(fl_name, "build", fl_name + ".bin")
         if os.path.exists(fl_bin):
+            ensure_signed(fl_name, fl_bin)
             with open(fl_bin, "rb") as f:
                 data = f.read()
             if len(data) > fl_size:
@@ -157,7 +226,7 @@ def build_image(output_file, apps, img_format="esp32", fatsize=0):
     spare_offset = len(image_data)
     for spare_name, spare_size in PROJECT_SPARE_APPS:
         table_csv.append("%s, app, ota_%d, %d, %d" % (spare_name, table_ota, spare_offset, spare_size))
-        print("  %-12s %7s   %7d bytes (gereserveerd)" % (spare_name, "-", spare_size))
+        print("  %-12s %7s   %7d bytes (reserved)" % (spare_name, "-", spare_size))
         table_ota += 1
         spare_offset += spare_size
 
@@ -213,6 +282,16 @@ def build_app(app, device_type, with_profiling=False, no_networking=False, is_re
     # defaults (e.g. gbsp turns Bluetooth off because the GBA buffers claim all SRAM).
     sdkconfig_files = [f"components/retro-go/targets/{device_type}/sdkconfig", os.path.join(app, "sdkconfig.overrides")]
     sdkconfig_files = [os.path.abspath(f) for f in sdkconfig_files if os.path.exists(f)]
+    if SIGNING_KEY:
+        # Keep machine-specific key paths in ignored build output, not public defaults.
+        os.makedirs("build", exist_ok=True)
+        signing_defaults = os.path.abspath("build/signing.defaults")
+        key_path = os.path.abspath(SIGNING_KEY).replace("\\", "/")
+        if any(c in key_path for c in '\n\r"'):
+            raise ValueError("Signing key path contains unsupported characters")
+        with open(signing_defaults, "w", encoding="utf-8") as f:
+            f.write('CONFIG_SECURE_BOOT_SIGNING_KEY="%s"\n' % key_path)
+        sdkconfig_files.append(signing_defaults)
     if sdkconfig_files:
         os.putenv("SDKCONFIG_DEFAULTS", ";".join(sdkconfig_files))
     args = [IDF_PY, "app"]

@@ -143,6 +143,44 @@ static bool verify_payloads(const rg_ota_job_t *job, char *error, size_t error_l
     return true;
 }
 
+// Refuses a package older than what is already on the device.
+//
+// ESP-IDF's own anti-rollback (CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK) is not
+// available here: it requires a partition table without a factory partition,
+// and this app IS the factory partition. It also spends one of only 16 eFuse
+// bits per bump. So downgrade protection lives in software instead, which stops
+// an attacker replaying an old but genuinely signed package to reopen a hole
+// that has since been closed.
+//
+// The reference is the launcher actually installed, read from its app
+// descriptor, not this app's own version: the flasher is not updated over the
+// air, so its compiled-in version drifts behind and would reject good packages.
+static bool check_not_a_downgrade(const rg_ota_job_t *job, char *error, size_t error_len)
+{
+    const esp_partition_t *launcher = esp_partition_find_first(
+        ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, "launcher");
+
+    esp_app_desc_t installed;
+    if (!launcher || esp_ota_get_partition_description(launcher, &installed) != ESP_OK)
+    {
+        // No readable launcher: the device is half-flashed or brand new, which
+        // is exactly when an update has to be allowed through.
+        RG_LOGW("No installed version to compare against, allowing the update");
+        return true;
+    }
+
+    if (rg_ota_version_compare(job->version, installed.version) < 0)
+    {
+        RG_LOGE("Refusing downgrade: package %s is older than installed %s",
+                job->version, installed.version);
+        snprintf(error, error_len, "%s\n%s %s\n%s %s", _("This update is older\nthan what is installed."),
+                 _("Installed:"), installed.version, _("Package:"), job->version);
+        return false;
+    }
+
+    return true;
+}
+
 static bool flash_part(const rg_ota_part_t *part, int index, int count, char *error, size_t error_len)
 {
     const esp_partition_t *target = esp_partition_find_first(
@@ -167,22 +205,41 @@ static bool flash_part(const rg_ota_part_t *part, int index, int count, char *er
         return false;
     }
 
-    // Only erase what we actually write; erasing a whole partition wastes
-    // seconds and flash cycles. Erase works per 4KB sector.
-    size_t erase_size = (part->size + SPI_FLASH_SEC_SIZE - 1) & ~(SPI_FLASH_SEC_SIZE - 1);
+    // Written through esp_ota_ops rather than straight into the partition,
+    // because esp_ota_end() validates the image before we ever let the
+    // bootloader near it -- and with signed apps enabled that validation
+    // includes the RSA signature. That check is the whole point of this
+    // function: it is what separates an update built by OviTech from one that
+    // was not, and it guards BOTH routes in, over the air and straight off the
+    // SD card, because both of them end up here.
+    //
+    // esp_ota_begin erases only the space the image needs, same as the
+    // hand-rolled erase it replaces.
+    //
+    // Note the order: the signature is checked by esp_ota_end, so it is checked
+    // AFTER the partition has been erased and written. A package signed by
+    // somebody else therefore leaves that partition invalid. That is survivable
+    // by design -- this app is the factory partition, the bootloader falls back
+    // to it, and the user lands right back in this screen to retry with a good
+    // package. Checking the signature straight from the file first would mean
+    // recomputing the image digest exactly the way the ROM does, and getting
+    // that subtly wrong would reject good updates, which is the worse failure.
+    esp_ota_handle_t handle = 0;
+    bool ota_open = false;
 
     draw_progress(_("Erasing"), index, count, 0, 1);
     // Erasing ~1.7MB is a single blocking call of several seconds; report
     // that we are alive again right after.
     rg_system_tick(0);
-    esp_err_t err = esp_partition_erase_range(target, 0, erase_size);
+    esp_err_t err = esp_ota_begin(target, part->size, &handle);
     rg_system_tick(0);
     if (err != ESP_OK)
     {
-        RG_LOGE("erase_range(%s, 0, %u) = 0x%X", part->partition, (unsigned)erase_size, err);
+        RG_LOGE("esp_ota_begin(%s, %u) = 0x%X", part->partition, (unsigned)part->size, err);
         snprintf(error, error_len, "%s\n(%s)", _("Erase failed"), part->partition);
         goto fail;
     }
+    ota_open = true;
 
     size_t written = 0;
     int last_percent = -1;
@@ -197,10 +254,10 @@ static bool flash_part(const rg_ota_part_t *part, int index, int count, char *er
             goto fail;
         }
 
-        err = esp_partition_write(target, written, buffer, got);
+        err = esp_ota_write(handle, buffer, got);
         if (err != ESP_OK)
         {
-            RG_LOGE("partition_write(%s, %u) = 0x%X", part->partition, (unsigned)written, err);
+            RG_LOGE("esp_ota_write(%s, %u) = 0x%X", part->partition, (unsigned)written, err);
             snprintf(error, error_len, "%s\n(%s)", _("Write failed"), part->partition);
             goto fail;
         }
@@ -216,11 +273,33 @@ static bool flash_part(const rg_ota_part_t *part, int index, int count, char *er
         }
     }
 
+    // Closes the handle either way, so it must not be aborted after this.
+    ota_open = false;
+    err = esp_ota_end(handle);
+    if (err != ESP_OK)
+    {
+        RG_LOGE("esp_ota_end(%s) = 0x%X", part->partition, err);
+        if (err == ESP_ERR_OTA_VALIDATE_FAILED)
+        {
+            // Either the signature does not match our key, or it is missing.
+            // Worth its own message: this is not a broken download but firmware
+            // from somebody else, and the user should be told that plainly.
+            snprintf(error, error_len, "%s\n(%s)", _("Update is not signed\nby OviTech"), part->partition);
+        }
+        else
+        {
+            snprintf(error, error_len, "%s\n(%s)", _("Write failed"), part->partition);
+        }
+        goto fail;
+    }
+
     free(buffer);
     fclose(fp);
     return true;
 
 fail:
+    if (ota_open)
+        esp_ota_abort(handle);
     free(buffer);
     fclose(fp);
     return false;
@@ -346,6 +425,15 @@ void app_main(void)
     }
 
     RG_LOGI("Found update %s, %d partition(s)", job->version, (int)job->parts_count);
+
+    if (!check_not_a_downgrade(job, error, sizeof(error)))
+    {
+        // Nothing has been erased yet, so the device is still whole. Drop the
+        // job so the same package does not ask again on every boot.
+        rg_gui_alert(_("Update refused"), error);
+        cleanup_job(job);
+        boot_launcher();
+    }
 
     while (true)
     {

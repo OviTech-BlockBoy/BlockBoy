@@ -8,7 +8,7 @@ import serial
 import serial.tools.list_ports as lp
 
 LOG = sys.argv[1] if len(sys.argv) > 1 else "serial.log"
-PREF = sys.argv[2] if len(sys.argv) > 2 else "COM94"
+PREF = sys.argv[2] if len(sys.argv) > 2 else "COM3"
 
 def find_port():
     # Try the preferred port first, otherwise any USB-serial-like port.
@@ -23,7 +23,7 @@ def find_port():
 
 def main():
     log = open(LOG, "a", buffering=1, encoding="utf-8", errors="replace")
-    log.write(f"\n=== capture gestart {time.strftime('%H:%M:%S')} ===\n")
+    log.write(f"\n=== capture started {time.strftime('%H:%M:%S')} ===\n")
     while True:
         port = find_port()
         if not port:
@@ -32,7 +32,7 @@ def main():
             ser = serial.Serial(port, 115200, timeout=1)
         except Exception:
             time.sleep(0.4); continue
-        log.write(f"=== verbonden op {port} {time.strftime('%H:%M:%S')} ===\n")
+        log.write(f"=== connected on {port} {time.strftime('%H:%M:%S')} ===\n")
         buf = b""
         try:
             while True:
@@ -45,7 +45,7 @@ def main():
         except Exception:
             try: ser.close()
             except Exception: pass
-            log.write(f"=== verbinding verloren {time.strftime('%H:%M:%S')} ===\n")
+            log.write(f"=== connection lost {time.strftime('%H:%M:%S')} ===\n")
             time.sleep(0.4)
 
 if __name__ == "__main__":

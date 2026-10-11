@@ -141,7 +141,7 @@ bool jit_selftest_run(void)
     reg[0] = reg[1] = reg[2] = 0;
   }
 
-  /* ---- Test D: callx8 naar windowed C-functie ---- */
+  /* ---- Test D: callx8 to a windowed C function ---- */
   {
     u8 *buf = (u8 *)heap_ptr + 1536;
     xe_init(&e, buf, BLOCK_SPACE, LIT_SLOTS, delta);
@@ -158,7 +158,7 @@ bool jit_selftest_run(void)
     (r == 42) ? pass++ : fail++;
   }
 
-  /* ---- Test E: voorwaartse branch met fixup ---- */
+  /* ---- Test E: forward branch with fixup ---- */
   {
     u8 *buf = (u8 *)heap_ptr + 2048;
     xe_init(&e, buf, BLOCK_SPACE, LIT_SLOTS, delta);

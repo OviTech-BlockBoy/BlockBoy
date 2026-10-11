@@ -26,3 +26,10 @@ managed_components/
 *.gba
 *.gb
 *.gbc
+
+# Signing keys never belong in the repo. The private key is kept outside the
+# source tree and is the only thing in this project that cannot be recreated.
+*.pem
+
+# Published firmware image
+!/blockboy_2.1.1_0v1tech-blockboy-n16r8.img

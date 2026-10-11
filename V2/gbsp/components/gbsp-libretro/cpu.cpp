@@ -1691,7 +1691,7 @@ counted:
                chan, m4a_ch_hook, m4a_wb);
       } else {
         m4a_ch_hook = 0; m4a_wb = 0;     /* not found → A2-1 inactive = safe fallback */
-        printf("[M4A] A2-3: signature NOT found (chan=0x%08x wb=0x%08x) → A2-1 off (interpreter)\n",
+        printf("[M4A] A2-3: signature NOT found (chan=0x%08x wb=0x%08x) -> A2-1 off (interpreter)\n",
                chan, wb);
       }
     }
@@ -1841,7 +1841,7 @@ static int m4a_a2_skip_channel(void)
   u32 spv     = (u32)m4a_read32(si + 0x10);          /* pcmSamplesPerVBlank */
   u32 pcmFreq = (u32)m4a_read32(si + 0x14); if (!pcmFreq) pcmFreq = 1;
   u32 freq    = m4a_read32(ch + 0x20);               /* SoundChannel.frequency */
-  u32 count   = reg[2];                              /* nog te spelen samples */
+  u32 count   = reg[2];                              /* samples still to play */
   u32 cp      = reg[3];                              /* currentPointer */
   u32 adv     = (u32)(((u64)freq * (u64)spv) / pcmFreq);
   if (adv > count) adv = count;                      /* v1: no loop-wrap → clamp */
@@ -2114,6 +2114,25 @@ static int swi_hle(u32 num, cpu_alert_type *alert)
 {
   u32 src = reg[0], dst = reg[1], ctrl = reg[2];
   u32 count = ctrl & 0x1FFFFFu;
+  /* Div (0x06) / DivArm (0x07). The built-in open BIOS (used when there is no
+   * gba_bios.bin on the SD) returns r0/r1 correctly but leaves r3 unchanged, while the
+   * real BIOS sets r3 = |r0/r1| (GBATEK). Zelda Minish Cap uses that r3: with the open
+   * BIOS the file select slid off-screen and the game hung there. gpSP's dynarec has
+   * always done Div natively (div6/divarm7), which is why it worked with the JIT
+   * builds and not in Classic. Same results as the real BIOS: r0 = quotient,
+   * r1 = remainder (sign of the numerator), r3 = |quotient|, r2 unchanged.
+   * Division by zero and INT_MIN/-1 keep the BIOS path. */
+  if (num == 0x06u || num == 0x07u) {
+    s32 n = (s32)(num == 0x06u ? reg[0] : reg[1]);
+    s32 d = (s32)(num == 0x06u ? reg[1] : reg[0]);
+    if (d == 0 || (n == (s32)0x80000000 && d == -1))
+      return 0;
+    s32 q = n / d;
+    reg[0] = (u32)q;
+    reg[1] = (u32)(n % d);
+    reg[3] = (u32)(q < 0 ? -q : q);
+    return 1;
+  }
   if (num == 0x0Bu) {                                  /* CpuSet */
     int fill = (ctrl >> 24) & 1;
     if (ctrl & 0x04000000u) {                          /* 32-bit */

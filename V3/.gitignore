@@ -26,3 +26,10 @@ managed_components/
 *.gba
 *.gb
 *.gbc
+
+# Keep private signing keys outside the source tree.
+*.pem
+*.key
+
+# Published firmware image
+!/blockboy_3.1.1_0v1tech-blockboy-n16r8.img

@@ -187,6 +187,10 @@ CONFIG_PARTITION_TABLE_FILENAME="../partitions.csv"
 # USB MSC support
 #
 CONFIG_TINYUSB_MSC_ENABLED=y
+# 16 sectors per SD write instead of 1. The patched MSC driver writes
+# synchronously, so with 512 bytes every sector waited for the card on its own
+# and USB copies crawled at ~230 KB/s.
+CONFIG_TINYUSB_MSC_BUFSIZE=8192
 
 #
 # USB host hardware buffer bias (needed for UAC isochronous OUT endpoints)
@@ -220,3 +224,21 @@ CONFIG_BT_NIMBLE_MAX_BONDS=3
 CONFIG_BT_NIMBLE_MAX_CCCDS=8
 CONFIG_BT_NIMBLE_NVS_PERSIST=y
 CONFIG_BT_NIMBLE_SECURITY_ENABLE=y
+
+#
+# Signed app images (fase 2, RED 3.3d / EN 18031-1 SUM-2)
+#
+# Every app binary carries an RSA-3072 signature block. esp_ota_end() and
+# esp_ota_set_boot_partition() refuse an image whose signature does not verify
+# against the public key in the running app, which closes both install routes:
+# over the air and straight off the SD card.
+#
+# This burns no eFuses and is reversible. It stops an attacker on the network,
+# not one holding the device with a USB cable; that boundary is a deliberate
+# choice, because owners are free to run their own builds.
+#
+CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT=y
+CONFIG_SECURE_SIGNED_APPS_RSA_SCHEME=y
+CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT=y
+CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=y
+CONFIG_SECURE_BOOT_SIGNING_KEY="blockboy_signing_key.pem"

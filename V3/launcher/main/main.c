@@ -16,6 +16,7 @@
 #include "browser.h"
 #include "gui.h"
 #include "webui.h"
+#include "rg_secrets.h"
 #include "updater.h"
 #include "usb_msc.h"
 #include "magnet_launch.h"
@@ -945,8 +946,10 @@ static rg_gui_event_t updater_cb(rg_gui_option_t *option, rg_gui_event_t event)
     return RG_DIALOG_VOID;
 }
 
-// Kept in sync with webui.c -- the menu shows and edits the same setting.
-#define SETTING_WEBUI_PASS "WebUIPassword"
+// Kept in sync with webui.c -- the menu shows and edits the same secret. It
+// lives in NVS, not in the config file on the SD card, because it is what keeps
+// a stranger off that card in the first place.
+#define WEBUI_PASSWORD_SECRET "webui_pw"
 
 
 
@@ -966,18 +969,29 @@ bool rg_gui_file_server_start(void)
 
 bool rg_gui_file_server_set_password(void)
 {
-    char *current = rg_settings_get_string(NS_APP, SETTING_WEBUI_PASS, webui_default_password());
-    char *entered = rg_gui_input_str(_("Server password"), _("Password:"), current ? current : "");
+    // The rule goes in the prompt because an empty field cannot be reported
+    // afterwards: rg_gui_input_str returns NULL both for "cancelled" and for
+    // "confirmed nothing", so the two are indistinguishable here. Either way the
+    // old password stays, which is the safe outcome; this just says so up front.
+    char *entered = rg_gui_input_str(_("Server password"), _("At least 8 characters"),
+                                     webui_password_current());
     bool changed = false;
-    if (entered)
+
+    if (entered && strlen(entered) >= RG_WEBUI_PASSWORD_MIN)
     {
-        rg_settings_set_string(NS_APP, SETTING_WEBUI_PASS, entered);
-        rg_settings_commit();
+        rg_secret_set(WEBUI_PASSWORD_SECRET, entered);
         webui_reload_password(); // applies to the next request, no restart
-        free(entered);
         changed = true;
     }
-    free(current);
+    else if (entered)
+    {
+        // Refused rather than stored. An empty password used to switch the check
+        // off entirely, which is the one thing the RED harmonisation explicitly
+        // does not allow. The old password stays in place.
+        rg_gui_alert(_("Server password"), _("Too short.\nUse at least 8 characters."));
+    }
+
+    free(entered);
     return changed;
 }
 
@@ -998,11 +1012,7 @@ bool rg_gui_file_server_running(void)
 
 const char *rg_gui_file_server_password(void)
 {
-    static char pass[33];
-    char *stored = rg_settings_get_string(NS_APP, SETTING_WEBUI_PASS, webui_default_password());
-    snprintf(pass, sizeof(pass), "%s", stored ? stored : "");
-    free(stored);
-    return pass[0] ? pass : NULL;
+    return webui_password_current();
 }
 #endif
 
@@ -1155,11 +1165,12 @@ static void retro_loop(void)
     if (rg_system_get_wifi_mode() == RG_WIFI_MODE_SYNC_ONLY)
         rg_task_create("time_sync", &sync_time_task, NULL, 4 * 1024, RG_TASK_PRIORITY_2, -1);
     else if (rg_system_get_wifi_mode() == RG_WIFI_MODE_ON
-             // Default OFF: the webui has no authentication and gives anyone
-             // on the same network read/write access to the whole SD card
-             // (incl. stored WiFi passwords in the settings). Whoever needs it
-             // enables it deliberately through the menu.
-             && rg_settings_get_number(NS_APP, SETTING_WEBUI, true))
+             // Default OFF, and the default here is what actually decides it:
+             // the server gives read/write access to the whole SD card (incl.
+             // the stored Wi-Fi passwords in the settings), so it should not be
+             // listening on every boot just because Wi-Fi is on. Whoever needs
+             // it turns it on through the menu, which persists this setting.
+             && rg_settings_get_number(NS_APP, SETTING_WEBUI, false))
         webui_start();
 #endif
 
@@ -1188,6 +1199,14 @@ static void retro_loop(void)
             rg_gui_draw_message(_("HTTP Server Busy..."));
             redraw_pending = true;
             rg_task_delay(100);
+            continue;
+        }
+
+        // Automatic update check: silent unless a newer version is out, and then
+        // only once the menu has been left alone for a second.
+        if (updater_poll(gui.idle_counter >= 10))
+        {
+            gui_redraw();
             continue;
         }
 

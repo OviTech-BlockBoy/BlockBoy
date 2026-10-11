@@ -73,6 +73,19 @@ static void lcd_reinit_display(int type);
 // the "ScPreserve" NVS flag in rg_display_init().
 static bool display_preserve = false;
 
+// Panel type this boot (RG_DISPLAY_TYPE_*). Read from the settings before lcd_init()
+// so the driver can run the matching init sequence while the SPI bus is still at the
+// slow init clock -- doing it afterwards would send it at RG_SCREEN_SPEED.
+static int display_init_type = 0;
+
+// Panel drive registers (VCOM 0xBB, VCOM offset 0xC5, VRH 0xC3, framerate 0xC6),
+// read from the settings before lcd_init() so the driver can write them while the
+// SPI bus is still at the slow init clock. These are analog-drive settings: a single
+// mangled byte leaves the panel powered, addressed and happily accepting pixels,
+// but showing nothing at all.
+static uint8_t display_init_vcom, display_init_vcom_offset;
+static uint8_t display_init_vrh, display_init_framerate;
+
 // False until rg_display_init() has populated `config` from the settings. Guards
 // rg_display_set_backlight() against callers that run before init (see there).
 static bool display_initialized = false;
@@ -615,11 +628,16 @@ int rg_display_get_height(void)
     return display.screen.height;
 }
 
-void rg_display_set_scaling(display_scaling_t scaling)
+void rg_display_set_scaling_runtime(display_scaling_t scaling)
 {
     config.scaling = RG_MIN(RG_MAX(0, scaling), RG_DISPLAY_SCALING_COUNT - 1);
-    rg_settings_set_number(NS_APP, SETTING_SCALING, config.scaling);
     display.changed = true;
+}
+
+void rg_display_set_scaling(display_scaling_t scaling)
+{
+    rg_display_set_scaling_runtime(scaling);
+    rg_settings_set_number(NS_APP, SETTING_SCALING, config.scaling);
 }
 
 display_scaling_t rg_display_get_scaling(void)
@@ -964,8 +982,30 @@ void rg_display_submit(const rg_surface_t *update, uint32_t flags)
 
 bool rg_display_sync(bool block)
 {
+    // Bounded, yielding wait. This used to be a bare `while (...) continue;`, which
+    // is a silent deadlock waiting to happen: if rg_display never drains its queue
+    // (e.g. it is itself stuck on the SPI transaction pool) the caller spins here
+    // forever at its own priority, starving the very task it is waiting for. With
+    // the task watchdog disabled on this target (CONFIG_ESP_TASK_WDT_INIT is off)
+    // nothing catches it -- the console goes quiet, the backlight stays on and the
+    // screen stays black until the user pulls the power. Seen as a ~1-in-6 black
+    // boot: the boot animation calls this every frame.
+    //
+    // Giving up after RG_DISPLAY_SYNC_TIMEOUT_MS costs at worst a torn frame; the
+    // return value already says whether the queue drained, and callers that care
+    // can check it.
+    const int RG_DISPLAY_SYNC_TIMEOUT_MS = 2000;
+    int64_t deadline = rg_system_timer() + RG_DISPLAY_SYNC_TIMEOUT_MS * 1000;
     while (block && rg_task_messages_waiting(display_task_queue))
-        continue; // We should probably yield?
+    {
+        if (rg_system_timer() > deadline)
+        {
+            RG_LOGE("Display queue did not drain in %dms, giving up (frame may tear)\n",
+                    RG_DISPLAY_SYNC_TIMEOUT_MS);
+            return false;
+        }
+        rg_task_yield();
+    }
     return !rg_task_messages_waiting(display_task_queue);
 }
 
@@ -1111,6 +1151,14 @@ void rg_display_clear(uint16_t color_le)
 void rg_display_deinit(void)
 {
     display_initialized = false;
+    // Let the display task work through what is still queued before we tear the SPI
+    // driver down under it. Bounded, so a stuck task delays the reboot by 2s instead
+    // of hanging it.
+    //
+    // This MUST happen before the STOP is sent: task_wrapper() does vQueueDelete()
+    // and memsets the rg_task_t as soon as the task returns, so a sync afterwards
+    // reads a freed queue handle and asserts inside uxQueueMessagesWaiting().
+    rg_display_sync(true);
     rg_task_send(display_task_queue, &(rg_task_msg_t){.type = RG_TASK_MSG_STOP});
     // Blank the panel before teardown so reboot/re-init garbage stays hidden — but
     // NOT during a showcase transition, where we keep the loading image lit so it
@@ -1166,22 +1214,20 @@ void rg_display_init(void)
                        && rg_settings_get_number(NS_GLOBAL, "DisplayActive", 0)
                        && !rg_system_get_app()->isColdBoot;
     rg_settings_set_number(NS_GLOBAL, "ScPreserve", 0);
+    // If the user has selected a non-default screen type, lcd_init() reinits with the
+    // correct sequence: it always runs RG_SCREEN_INIT (ST7789, the default screen2),
+    // then overrides it for ILI9341 (screen1). Skipped during a preserve transition so
+    // the retained loading image isn't wiped (the panel already has the right config).
+    display_init_type = rg_settings_get_number(NS_GLOBAL, SETTING_DISPLAY_TYPE, RG_DISPLAY_TYPE_ST7789);
+    // User-tuned panel drive registers. lcd_init() writes these itself, at the slow
+    // init clock -- they used to be sent here, after lcd_init() had already handed the
+    // bus to the frame pipeline at RG_SCREEN_SPEED.
+    display_init_vcom = rg_settings_get_number(NS_GLOBAL, SETTING_VCOM, DEFAULT_VCOM);
+    display_init_vcom_offset = rg_settings_get_number(NS_GLOBAL, SETTING_VCOM_OFFSET, DEFAULT_VCOM_OFFSET);
+    display_init_vrh = rg_settings_get_number(NS_GLOBAL, SETTING_VRH, DEFAULT_VRH);
+    display_init_framerate = rg_settings_get_number(NS_GLOBAL, SETTING_FRAMERATE, DEFAULT_FRAMERATE);
     lcd_init();
-    // If the user has selected a non-default screen type, reinit with the correct sequence.
-    // lcd_init() always runs RG_SCREEN_INIT (ST7789, the default screen2); this
-    // overrides it for ILI9341 (screen1). Skipped during a preserve transition so the
-    // retained loading image isn't wiped (the panel already has the right type's config).
-    if (!display_preserve)
-    {
-        int stored_type = rg_settings_get_number(NS_GLOBAL, SETTING_DISPLAY_TYPE, RG_DISPLAY_TYPE_ST7789);
-        if (stored_type != RG_DISPLAY_TYPE_ST7789)
-            lcd_reinit_display(stored_type);
-    }
-    // Apply user-tuned VCOM and the full software color pipeline (R/G/B gains, contrast, gamma).
-    lcd_set_vcom((uint8_t)rg_settings_get_number(NS_GLOBAL, SETTING_VCOM, DEFAULT_VCOM));
-    lcd_set_vcom_offset((uint8_t)rg_settings_get_number(NS_GLOBAL, SETTING_VCOM_OFFSET, DEFAULT_VCOM_OFFSET));
-    lcd_set_vrh((uint8_t)rg_settings_get_number(NS_GLOBAL, SETTING_VRH, DEFAULT_VRH));
-    lcd_set_framerate((uint8_t)rg_settings_get_number(NS_GLOBAL, SETTING_FRAMERATE, DEFAULT_FRAMERATE));
+    // The software color pipeline (R/G/B gains, contrast, gamma) is LUT-only, no SPI.
     lcd_set_color_config(
         rg_settings_get_number(NS_GLOBAL, SETTING_RGAIN, DEFAULT_GAIN),
         rg_settings_get_number(NS_GLOBAL, SETTING_GGAIN, DEFAULT_GAIN),

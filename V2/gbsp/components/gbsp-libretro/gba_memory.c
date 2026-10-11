@@ -2260,7 +2260,7 @@ static u8             *rp_stage;          /* 32KB PSRAM staging */
 static volatile u32    rp_stage_page;
 static volatile int    rp_stage_ready;
 static FILE           *rp_file;           /* separate ROM handle for the task */
-static SemaphoreHandle_t rp_mtx;          /* serialiseert SD-toegang + staging */
+static SemaphoreHandle_t rp_mtx;          /* serialises SD access + staging */
 static TaskHandle_t    rp_task;
 
 static void rom_prefetch_task(void *arg)
@@ -2285,7 +2285,7 @@ static void rom_prefetch_task(void *arg)
         if (fread(rp_stage + off, 4096, 1, rp_file) != 1) ok = 0;
       }
       else ok = 0;
-      xSemaphoreGive(rp_mtx);          /* hoofdpad mag ertussen */
+      xSemaphoreGive(rp_mtx);          /* the main path may run in between */
       if (!ok) break;
     }
     if (ok) { rp_stage_page = page; rp_stage_ready = 1; }
@@ -2439,7 +2439,7 @@ void init_gamepak_buffer(void)
   }
 #endif
 
-  // total pages over alle (volle + evt. partiële) blokken
+  // total pages over all (full + any partial) blocks
   gamepak_total_pages = 0;
   for (i = 0; i < gamepak_buffer_count; i++)
     gamepak_total_pages += gamepak_block_pages[i];

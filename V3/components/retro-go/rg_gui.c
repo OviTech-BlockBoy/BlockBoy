@@ -1,5 +1,6 @@
 #include "rg_system.h"
 #include "rg_gui.h"
+#include "rg_secrets.h"
 
 #include <cJSON.h>
 #include <math.h>
@@ -16,6 +17,18 @@
 // customers guessing what belongs there. webui.c ignores whatever is typed and
 // only checks the password, so an empty username keeps working too.
 #define RG_WEBUI_USER "blockboy"
+
+// Access point credentials. The name is the same on every unit (it is what the
+// customer looks for in their Wi-Fi list); the password is generated per device
+// on first use and kept in the settings. One password in the source would be no
+// password at all here, since the source is public, and a pre-installed secret
+// has to be unique per unit anyway.
+#define RG_AP_SSID "BlockBoy"
+#define SETTING_WIFI_AP_PASSWORD "APPassword"  // legacy, read once to migrate
+#define RG_AP_PASSWORD_SECRET "ap_pw"
+// WPA2 needs at least 8. Twelve characters of our alphabet is about 57 bits,
+// far past guessing range while still being typeable on a phone.
+#define RG_AP_PASSWORD_LEN 12
 
 // DMG palette -- RGB565 -- mirrors gnuboy GB_PALETTE_DMG (yellow-olive).
 // Used by the tabbed dialog and as defaults for rg_gui_set_theme.
@@ -2359,6 +2372,37 @@ static rg_gui_event_t border_update_cb(rg_gui_option_t *option, rg_gui_event_t e
 }
 
 #ifdef RG_ENABLE_NETWORKING
+// The access point password for this device, made on first use and remembered
+// after that. Regenerates when the settings are wiped or the card comes from
+// another unit, which is fine: the dialog shows it right before you need it.
+static const char *wifi_ap_password(void)
+{
+    static char password[RG_AP_PASSWORD_LEN + 1];
+
+    if (!password[0])
+    {
+        // In NVS, not in the config file on the SD card: a password is a
+        // confidential asset and the card leaves the device (see rg_secrets.h).
+        // Older firmware stored it in the settings, so move that across first.
+        rg_secret_migrate(NS_WIFI, SETTING_WIFI_AP_PASSWORD, RG_AP_PASSWORD_SECRET);
+
+        char stored[RG_AP_PASSWORD_LEN + 1];
+        // Anything too short for WPA2 counts as absent rather than being passed
+        // to esp_wifi_set_config, which would quietly start an open network.
+        if (rg_secret_get(RG_AP_PASSWORD_SECRET, stored, sizeof(stored)) && strlen(stored) >= 8)
+            memcpy(password, stored, strlen(stored) + 1);
+    }
+
+    if (!password[0])
+    {
+        rg_random_secret(password, RG_AP_PASSWORD_LEN);
+        rg_secret_set(RG_AP_PASSWORD_SECRET, password);
+        RG_LOGI("Generated a new access point password\n");
+    }
+
+    return password;
+}
+
 static void wifi_toggle_interactive(bool enable, int slot)
 {
     rg_network_state_t target_state = enable ? RG_NETWORK_CONNECTED : RG_NETWORK_DISCONNECTED;
@@ -2372,25 +2416,31 @@ static void wifi_toggle_interactive(bool enable, int slot)
         rg_network_wifi_set_config(&config);
         if (slot == 9000)
         {
-            const rg_wifi_config_t config = {
-                .ssid = "BlockBoy",
-                .password = "blockboy",
-                .channel = 6,
-                .ap_mode = true,
-            };
-            rg_network_wifi_set_config(&config);
+            rg_wifi_config_t ap_config = {.channel = 6, .ap_mode = true};
+            snprintf(ap_config.ssid, sizeof(ap_config.ssid), "%s", RG_AP_SSID);
+            snprintf(ap_config.password, sizeof(ap_config.password), "%s", wifi_ap_password());
+            rg_network_wifi_set_config(&ap_config);
         }
         if (!rg_network_wifi_start())
             return;
     }
+    bool timed_out = false;
     do // Always loop at least once, in case we're in a transition
     {
         rg_task_delay(100);
         if (rg_system_timer() > timeout)
+        {
+            timed_out = true;
             break;
+        }
         if (rg_input_read_gamepad())
             break;
     } while (rg_network_get_info().state != target_state);
+
+    // Wrong password or network out of reach: say so instead of leaving the
+    // menu on "On" while the radio keeps retrying in the background.
+    if (enable && timed_out && rg_network_get_info().state != RG_NETWORK_CONNECTED)
+        rg_gui_alert(_("Wi-Fi"), _("Could not connect.\nCheck the network name and password."));
 }
 
 static rg_gui_event_t wifi_status_cb(rg_gui_option_t *option, rg_gui_event_t event)
@@ -2599,7 +2649,14 @@ static rg_gui_event_t wifi_access_point_cb(rg_gui_option_t *option, rg_gui_event
 {
     if (event == RG_DIALOG_ENTER)
     {
-        if (rg_gui_confirm(_("Wi-Fi AP"), _("Start access point?\n\nSSID: BlockBoy\nPassword: blockboy\n\nBrowse: http://192.168.4.1/"), true))
+        // Built here rather than kept as one translated sentence: the password
+        // differs per device, so it cannot live in the string table.
+        char message[192];
+        snprintf(message, sizeof(message), "%s\n\nSSID: %s\n%s %s\n\n%s",
+                 _("Start access point?"), RG_AP_SSID, _("Password:"), wifi_ap_password(),
+                 "http://192.168.4.1/");
+
+        if (rg_gui_confirm(_("Wi-Fi AP"), message, true))
         {
             wifi_toggle_interactive(true, 9000);
         }
@@ -2640,8 +2697,9 @@ __attribute__((weak)) bool rg_gui_file_server_set_enabled(bool enable)
 // Customer-facing help: explains that the device's own IP (the one shown at
 // "IP address") is the address to open in a web browser to manage the SD card.
 // Opening this dialog in the launcher also STARTS the file server for this
-// session — without that the promised URL never answered (the server defaults
-// to off for security: it has no authentication).
+// session — without that the promised URL never answered. The server is off
+// until asked for: it hands out the whole SD card, so it should not be
+// listening on every boot just because Wi-Fi happens to be on.
 // Uses single-line MESSAGE rows (not one multi-line string) so every line is
 // measured and drawn; the URL lives in a static buffer so its pointer stays
 // valid while the dialog is open.
@@ -2734,9 +2792,9 @@ static rg_gui_event_t wifi_mode_cb(rg_gui_option_t *option, rg_gui_event_t event
     return changed ? RG_DIALOG_REDRAW : RG_DIALOG_VOID;
 }
 
-// Het serverwachtwoord hoort thuis waar de rest van de servergegevens staat,
-// en daar wil je hem ook meteen kunnen wijzigen in plaats van alleen aflezen.
-// De invoer zelf zit in de launcher; hier vragen we er via het haakje om.
+// The server password belongs where the rest of the server details are, and it
+// should be changeable there rather than only readable. Entering it lives in the
+// launcher, so this asks for it through the hook.
 static rg_gui_event_t wifi_server_toggle_cb(rg_gui_option_t *option, rg_gui_event_t event)
 {
     rg_gui_event_t result = RG_DIALOG_VOID;
@@ -3489,8 +3547,11 @@ void rg_gui_options_menu(void)
         entries[n++] = (rg_gui_menu_entry_t){ 1, "BattCal",    false, {0, _("Batt. calibration"), "-", RG_DIALOG_FLAG_NORMAL, &battery_cal_cb} };
         entries[n++] = (rg_gui_menu_entry_t){ 0, "FontType",   false, {0, _("Font type"),      "-",  RG_DIALOG_FLAG_NORMAL, &font_type_cb} };
         entries[n++] = (rg_gui_menu_entry_t){ 0, "Theme",      true,  {0, _("Menu theme"),     "-",  RG_DIALOG_FLAG_NORMAL, &theme_cb} };
+        // Down here with the other look-and-feel entries rather than up beside
+        // Brightness: it is a one-off fitting adjustment, not something an owner
+        // reaches for as often as volume.
+        entries[n++] = (rg_gui_menu_entry_t){ 0, "ScreenPos",  true,  {0, _("Screen position"),NULL, RG_DIALOG_FLAG_NORMAL, &screen_position_menu_cb} };
         entries[n++] = (rg_gui_menu_entry_t){ 0, "ColorTune",  false, {0, _("Color settings"),   NULL, RG_DIALOG_FLAG_NORMAL, &color_menu_cb} };
-        entries[n++] = (rg_gui_menu_entry_t){ 0, "ScreenPos",  false, {0, _("Screen position"),NULL, RG_DIALOG_FLAG_NORMAL, &screen_position_menu_cb} };
         #ifdef RG_GPIO_LED
         entries[n++] = (rg_gui_menu_entry_t){ 0, "LEDOptions", false, {0, _("LED options"),    NULL, RG_DIALOG_FLAG_NORMAL, &led_indicator_cb} };
         #endif
@@ -3847,6 +3908,9 @@ static void stop_showcase(void)
     rg_settings_commit();
 }
 
+__attribute__((weak)) const char *rg_benchmark_menu_label(void) { return NULL; }
+__attribute__((weak)) void rg_benchmark_menu(void) {}
+
 void rg_gui_game_menu(void)
 {
     const char *rom_path = rg_system_get_app()->romPath;
@@ -3897,6 +3961,8 @@ void rg_gui_game_menu(void)
     #ifdef RG_ENABLE_NETPLAY
     choices[n++] = (rg_gui_option_t){5000, _("Game Link"),       NULL, RG_DIALOG_FLAG_NORMAL, NULL};
     #endif
+    if (rg_benchmark_menu_label())
+        choices[n++] = (rg_gui_option_t){6000, rg_benchmark_menu_label(), NULL, RG_DIALOG_FLAG_NORMAL, NULL};
     choices[n++] = (rg_gui_option_t){5500, _("Options"),         NULL, RG_DIALOG_FLAG_NORMAL, NULL};
     choices[n++] = (rg_gui_option_t){7000, _("Quit"),            NULL, RG_DIALOG_FLAG_NORMAL, NULL};
     choices[n] = (rg_gui_option_t)RG_DIALOG_END;
@@ -3926,6 +3992,7 @@ void rg_gui_game_menu(void)
     #ifdef RG_ENABLE_NETPLAY
         case 5000: rg_netplay_quick_start(); break;
     #endif
+        case 6000: rg_benchmark_menu(); break;
         case 5500: rg_gui_options_menu(); break;
         case 7000: rg_system_exit(); break;
     }
@@ -4394,6 +4461,7 @@ static const struct { const char *key; const char *label; bool default_vis; }
 shop_ingame_options[] = {
     {"OsdStats", "FPS overlay", false},
     {"Border",   "Border",      false},
+    {"GbaBench", "GBA benchmark", false},
 };
 
 static bool shop_lookup_default(const char *vis_key)
@@ -4431,6 +4499,8 @@ static rg_gui_event_t shop_preset_reset_cb(rg_gui_option_t *option, rg_gui_event
             if (shop_target_entries[i].vis_key)
                 rg_gui_set_option_visible(shop_target_entries[i].vis_key,
                                           shop_target_entries[i].default_vis);
+        for (size_t i = 0; i < RG_COUNT(shop_ingame_options); ++i)
+            rg_gui_set_option_visible(shop_ingame_options[i].key, shop_ingame_options[i].default_vis);
         rg_gui_alert("Reset", "Defaults restored.");
         return RG_DIALOG_REDRAW;
     }
@@ -4444,6 +4514,8 @@ static rg_gui_event_t shop_preset_all_on_cb(rg_gui_option_t *option, rg_gui_even
         for (int i = 0; shop_target_entries[i].tab_id >= 0; i++)
             if (shop_target_entries[i].vis_key)
                 rg_gui_set_option_visible(shop_target_entries[i].vis_key, true);
+        for (size_t i = 0; i < RG_COUNT(shop_ingame_options); ++i)
+            rg_gui_set_option_visible(shop_ingame_options[i].key, true);
         rg_gui_alert("All On", "All options enabled.");
         return RG_DIALOG_REDRAW;
     }
@@ -4457,6 +4529,8 @@ static rg_gui_event_t shop_preset_all_off_cb(rg_gui_option_t *option, rg_gui_eve
         for (int i = 0; shop_target_entries[i].tab_id >= 0; i++)
             if (shop_target_entries[i].vis_key)
                 rg_gui_set_option_visible(shop_target_entries[i].vis_key, false);
+        for (size_t i = 0; i < RG_COUNT(shop_ingame_options); ++i)
+            rg_gui_set_option_visible(shop_ingame_options[i].key, false);
         rg_gui_alert("All Off", "All options disabled.");
         return RG_DIALOG_REDRAW;
     }
@@ -4590,7 +4664,7 @@ static rg_gui_event_t about_popup_cb(rg_gui_option_t *option, rg_gui_event_t eve
             {0, "Target",    target_line,                                  RG_DIALOG_FLAG_MESSAGE,  NULL},
             {0, "Website",   (char *)RG_PROJECT_WEBSITE,                   RG_DIALOG_FLAG_MESSAGE,  NULL},
             {0, "Project: BlockBoy by 0v1Tech",                     NULL, RG_DIALOG_FLAG_MESSAGE,  NULL},
-            {0, "Based on Retro-Go by ducalex (GPL v3)",            NULL, RG_DIALOG_FLAG_MESSAGE,  NULL},
+            {0, "Based on Retro-Go by ducalex (GPL v2)",            NULL, RG_DIALOG_FLAG_MESSAGE,  NULL},
             {0, "Upstream: github.com/ducalex/retro-go",            NULL, RG_DIALOG_FLAG_MESSAGE,  NULL},
             {0, "Source: github.com/OviTech-BlockBoy/BlockBoy",     NULL, RG_DIALOG_FLAG_DISABLED, NULL},
             RG_DIALOG_END,

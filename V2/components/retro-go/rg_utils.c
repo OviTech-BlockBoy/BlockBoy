@@ -5,6 +5,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef ESP_PLATFORM
+#include <esp_random.h>
+#endif
+
 char *rg_strtolower(char *str)
 {
     if (!str)
@@ -311,6 +315,63 @@ IRAM_ATTR uint32_t rg_hash(const char *data, size_t len)
 
     #undef get16bits
     return hash;
+}
+
+// Deliberately missing: 0/O, 1/l/I, 5/S, 8/B. A customer reads these passwords
+// off a 320x240 screen and types them on a phone, and a misread character costs
+// more than the two bits of entropy it saves.
+static const char SECRET_ALPHABET[] = "acdefghjkmnpqrtuvwxyz234679";
+
+static void random_bytes(uint8_t *out, size_t len)
+{
+#ifdef ESP_PLATFORM
+    // Hardware RNG. Properly random once Wi-Fi or Bluetooth is up; before that
+    // it is seeded but weaker, which is why secrets are generated on first use
+    // rather than during early boot.
+    esp_fill_random(out, len);
+#else
+    // Host builds only, for the SDL target. Never used for a shipped secret.
+    for (size_t i = 0; i < len; ++i)
+        out[i] = (uint8_t)(rand() >> 7);
+#endif
+}
+
+void rg_random_secret(char *out, size_t len)
+{
+    RG_ASSERT_ARG(out != NULL);
+
+    const size_t alphabet = sizeof(SECRET_ALPHABET) - 1;
+    // Bytes at or above this would wrap the alphabet a second time and make its
+    // first few characters come up more often, so they are thrown away instead.
+    const unsigned limit = 256 - (256 % alphabet);
+
+    for (size_t i = 0; i < len;)
+    {
+        uint8_t byte;
+        random_bytes(&byte, 1);
+        if (byte >= limit)
+            continue;
+        out[i++] = SECRET_ALPHABET[byte % alphabet];
+    }
+
+    out[len] = 0;
+}
+
+bool rg_secret_equal(const char *a, const char *b)
+{
+    if (!a || !b)
+        return false;
+
+    size_t len_a = strlen(a);
+    size_t len_b = strlen(b);
+    unsigned char diff = (len_a != len_b);
+
+    // Walks the whole stored secret even after a mismatch, so the time taken
+    // does not count how many characters the caller got right.
+    for (size_t i = 0; i < len_b; ++i)
+        diff |= (unsigned char)(a[i < len_a ? i : 0] ^ b[i]);
+
+    return diff == 0;
 }
 
 typedef struct

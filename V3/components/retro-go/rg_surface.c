@@ -53,7 +53,12 @@ rg_surface_t *rg_surface_create(int width, int height, int format, uint32_t allo
         RG_LOGE("Surface allocation failed!");
         return NULL;
     }
-    memset(surface, 0, sizeof(rg_surface_t));
+    // Zero the pixel data too, not just the header. MEM_ANY is 0, so emulator frame
+    // buffers come from plain malloc() and inherit whatever the previous app left in
+    // PSRAM. gnuboy submits its first frame after the game re-enables the LCD
+    // mid-frame, so the lines above the resume point are never rendered before
+    // being shown: one frame of coloured noise on every game launch (2026-09-12).
+    memset(surface, 0, total_size);
     surface->width = width;
     surface->height = height;
     surface->stride = width * pixel_size;

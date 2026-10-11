@@ -19,6 +19,20 @@ dialog. Remove it before you hand the device over.
 
 Note: this uses plain HTTP, so the HTTPS route to GitHub is not tested here.
 Do that check separately before going live.
+
+IMPORTANT: released firmware refuses an http:// override and falls back to the
+GitHub manifest. Without TLS there is nothing left vouching for where the update
+came from, and the checksums come out of the same manifest an attacker would
+have replaced. To use this server you need a firmware built with:
+
+    cd launcher
+    idf.py -DRG_OTA_ALLOW_INSECURE_MANIFEST=1 -DRG_PROJECT_APP=launcher ... build
+
+(the other -D arguments are the ones rg_tool.py normally passes; see build_app
+in rg_tool.py). Only the launcher checks for updates, so only that app needs it.
+
+Never flash such a build onto a device that leaves the workbench. It logs a
+warning at every update check so you can spot one that got away.
 """
 
 import argparse

@@ -18,6 +18,7 @@
  */
 
 #include "common.h"
+#include "gba_profile.h"
 #include <ctype.h>
 
 timer_type timer[4];
@@ -179,9 +180,17 @@ u32 function_cc update_gba(int remaining_cycles)
           // and the frame is predicted clean → the render core draws it from the
           // snapshot. Otherwise render live per-scanline on core0.
           if (!(g_offload_active && g_predict_clean))
+          {
+            uint32_t profile_start = gba_profile_begin();
             update_scanline();
+            gba_profile_end(GP_LIVE_RENDER, profile_start);
+          }
 #else
-          update_scanline();
+          {
+            uint32_t profile_start = gba_profile_begin();
+            update_scanline();
+            gba_profile_end(GP_LIVE_RENDER, profile_start);
+          }
 #endif
 
           // Trigger the HBlank DMAs if enabled

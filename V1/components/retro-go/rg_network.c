@@ -1,4 +1,5 @@
 #include "rg_system.h"
+#include "rg_secrets.h"
 #include "rg_network.h"
 #ifdef ESP_PLATFORM
 #include <mdns.h>
@@ -132,12 +133,13 @@ bool rg_network_wifi_read_config(int slot, rg_wifi_config_t *out)
     if (slot < 0 || slot > 99)
         return false;
 
-    char key_ssid[16], key_password[16], key_channel[16], key_mode[16];
+    char key_ssid[16], key_password[16], key_channel[16], key_mode[16], key_secret[16];
     rg_wifi_config_t config = {0};
     char *ptr;
 
     snprintf(key_ssid, 16, "%s%d", SETTING_WIFI_SSID, slot);
     snprintf(key_password, 16, "%s%d", SETTING_WIFI_PASSWORD, slot);
+    snprintf(key_secret, 16, "wifi_pw%d", slot);
     snprintf(key_channel, 16, "%s%d", SETTING_WIFI_CHANNEL, slot);
     snprintf(key_mode, 16, "%s%d", SETTING_WIFI_MODE, slot);
 
@@ -145,8 +147,16 @@ bool rg_network_wifi_read_config(int slot, rg_wifi_config_t *out)
 
     if ((ptr = rg_settings_get_string(NS_WIFI, key_ssid, NULL)))
         memccpy(config.ssid, ptr, 0, 32), free(ptr);
-    if ((ptr = rg_settings_get_string(NS_WIFI, key_password, NULL)))
-        memccpy(config.password, ptr, 0, 64), free(ptr);
+    // The password is a confidential asset, so it lives in NVS and not in the
+    // JSON on the SD card (see rg_secrets.h). Older firmware kept it there;
+    // this moves any leftover across and wipes it off the card.
+    rg_secret_migrate(NS_WIFI, key_password, key_secret);
+    // The very first firmware used un-suffixed keys for slot 0. Scrub that one
+    // too, even when a suffixed slot 0 exists: a stale plaintext copy on the
+    // card is the whole thing this is about.
+    if (slot == 0)
+        rg_secret_migrate(NS_WIFI, SETTING_WIFI_PASSWORD, key_secret);
+    rg_secret_get(key_secret, config.password, sizeof(config.password));
     config.channel = rg_settings_get_number(NS_WIFI, key_channel, 0);
     config.ap_mode = rg_settings_get_number(NS_WIFI, key_mode, 0);
 
@@ -154,8 +164,7 @@ bool rg_network_wifi_read_config(int slot, rg_wifi_config_t *out)
     {
         if ((ptr = rg_settings_get_string(NS_WIFI, SETTING_WIFI_SSID, NULL)))
             memccpy(config.ssid, ptr, 0, 32), free(ptr);
-        if ((ptr = rg_settings_get_string(NS_WIFI, SETTING_WIFI_PASSWORD, NULL)))
-            memccpy(config.password, ptr, 0, 64), free(ptr);
+        rg_secret_get(key_secret, config.password, sizeof(config.password));
         config.channel = rg_settings_get_number(NS_WIFI, SETTING_WIFI_CHANNEL, 0);
         config.ap_mode = rg_settings_get_number(NS_WIFI, SETTING_WIFI_MODE, 0);
     }
@@ -171,13 +180,16 @@ bool rg_network_wifi_write_config(int slot, const rg_wifi_config_t *config)
 {
     if (slot < 0 || slot > 99 || !config)
         return false;
-    char key_ssid[16], key_password[16], key_channel[16], key_mode[16];
+
+    char key_ssid[16], key_password[16], key_channel[16], key_mode[16], key_secret[16];
     snprintf(key_ssid, 16, "%s%d", SETTING_WIFI_SSID, slot);
     snprintf(key_password, 16, "%s%d", SETTING_WIFI_PASSWORD, slot);
+    snprintf(key_secret, 16, "wifi_pw%d", slot);
     snprintf(key_channel, 16, "%s%d", SETTING_WIFI_CHANNEL, slot);
     snprintf(key_mode, 16, "%s%d", SETTING_WIFI_MODE, slot);
+
     rg_settings_set_string(NS_WIFI, key_ssid, config->ssid);
-    rg_settings_set_string(NS_WIFI, key_password, config->password);
+    rg_secret_set(key_secret, config->password);
     rg_settings_set_number(NS_WIFI, key_channel, config->channel);
     rg_settings_set_number(NS_WIFI, key_mode, config->ap_mode);
     return true;
@@ -187,13 +199,16 @@ bool rg_network_wifi_delete_config(int slot)
 {
     if (slot < 0 || slot > 99)
         return false;
-    char key_ssid[16], key_password[16], key_channel[16], key_mode[16];
+
+    char key_ssid[16], key_password[16], key_channel[16], key_mode[16], key_secret[16];
     snprintf(key_ssid, 16, "%s%d", SETTING_WIFI_SSID, slot);
     snprintf(key_password, 16, "%s%d", SETTING_WIFI_PASSWORD, slot);
+    snprintf(key_secret, 16, "wifi_pw%d", slot);
     snprintf(key_channel, 16, "%s%d", SETTING_WIFI_CHANNEL, slot);
     snprintf(key_mode, 16, "%s%d", SETTING_WIFI_MODE, slot);
+
     rg_settings_delete(NS_WIFI, key_ssid);
-    rg_settings_delete(NS_WIFI, key_password);
+    rg_secret_delete(key_secret);
     rg_settings_delete(NS_WIFI, key_channel);
     rg_settings_delete(NS_WIFI, key_mode);
     return true;
@@ -246,8 +261,10 @@ bool rg_network_wifi_start(void)
         TRY(esp_wifi_set_mode(WIFI_MODE_STA));
         TRY(esp_wifi_set_config(WIFI_IF_STA, &config));
         TRY(esp_wifi_start());
-        // Low-power tuning (best-effort): modem-sleep between beacons + lower TX
-        // power (~11 dBm vs ~20 dBm default) → less current spikes / dimming.
+        // Low-power tuning (best-effort, non-fatal): let the radio modem-sleep
+        // between beacons, and cut TX power from the ~20 dBm default to ~11 dBm.
+        // The big TX current spikes are what briefly dim the backlight; this
+        // keeps background Wi-Fi light and reduces the dimming.
         esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
         esp_wifi_set_max_tx_power(44); // 0.25 dBm units -> 11 dBm
     }
@@ -300,8 +317,9 @@ int rg_network_wifi_scan(rg_wifi_scan_result_t *results, int max_results)
         .scan_type = WIFI_SCAN_TYPE_ACTIVE,
         .scan_time.active.min = 120, .scan_time.active.max = 300,
     };
+
     RG_LOGI("Scanning for Wi-Fi networks...");
-    err = esp_wifi_scan_start(&scan_cfg, true);
+    err = esp_wifi_scan_start(&scan_cfg, true); // blocking
     if (err != ESP_OK) { RG_LOGE("scan_start failed: 0x%x", err); return -1; }
 
     uint16_t ap_count = 0;
@@ -324,6 +342,7 @@ int rg_network_wifi_scan(rg_wifi_scan_result_t *results, int max_results)
         results[i].auth_mode = (int)records[i].authmode;
     }
     free(records);
+
     RG_LOGI("Wi-Fi scan found %d networks (returning %d)", ap_count, out_count);
     return out_count;
 #else
@@ -438,10 +457,11 @@ rg_http_req_t *rg_network_http_open(const char *url, const rg_http_cfg_t *cfg)
         .method = req->config.post_data ? HTTP_METHOD_POST : HTTP_METHOD_GET,
         .timeout_ms = req->config.timeout_ms,
     #ifdef CONFIG_MBEDTLS_CERTIFICATE_BUNDLE
-        // Without a CA bundle esp-tls accepts any certificate. Too risky for
-        // firmware over that connection: anyone on the same network could
-        // replace both the manifest and the binaries, and the checksums come
-        // from that same manifest.
+        // Without a CA bundle esp-tls accepts any certificate (see
+        // CONFIG_ESP_TLS_SKIP_SERVER_CERT_VERIFY). For images that is
+        // tolerable, but not for fetching firmware over such a connection:
+        // anyone on the same network could replace both the manifest and the
+        // binaries, and the checksums come from that same manifest.
         .crt_bundle_attach = esp_crt_bundle_attach,
     #endif
     });

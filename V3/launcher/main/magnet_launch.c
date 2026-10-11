@@ -75,12 +75,33 @@
 // both sides, and leaves far more than the ~4 degrees of angular noise a 50uT
 // wobble puts on an 800uT vector.
 #define MAGNET_FP_MATCH        0.95f
+// A best score means nothing on its own: 0.970 beating 0.940 is a six-degree
+// decision, and the wrong side of it starts somebody else's game. So the winner
+// also has to beat the runner-up by this much, or nothing launches.
+#define MAGNET_FP_MARGIN       0.02f
 #define MAGNET_FIELD_MIN       50
 #define MAGNET_FIELD_MAX       5000
+
+// Samples averaged for the zero measurement. Eight times what a normal reading
+// takes, because every later reading is expressed relative to this one -- an
+// error here is an error in all of them, for as long as it stands.
+#define MAGNET_ZERO_SAMPLES    64
 
 #define MAGNET_NS              "magnet"
 #define MAGNET_KEY_ENABLE      "Enable"
 #define MAGNET_KEY_FIELD       "FieldUT"
+// Ambient field with the slot empty, as "x,y,z" in microtesla. This is not a
+// small correction. Measured on the first V3 board it is 685uT -- fourteen times
+// the earth field -- while the cartridge magnet only tilts that vector by 14 to
+// 20 degrees, which works out at 170-240uT of actual signal. Left unsubtracted,
+// an empty console reads far above any sane presence threshold and matches
+// whichever pairing happens to lie closest to the board's own field.
+#define MAGNET_KEY_ZERO        "Zero"
+// Bumped to 2 when stored directions became zero-relative. Entries written by an
+// older build still carry the offset; subtracting today's zero from them, once,
+// is exactly the correction they never got.
+#define MAGNET_KEY_VER         "Ver"
+#define MAGNET_VER_ZEROED      2
 
 // "Slot" + an int + "App" + NUL. Sized for any int so the compiler can see that
 // the slot keys never truncate.
@@ -116,8 +137,23 @@ static bool tmag_present = false;
 // adds a supply-dependent offset to an otherwise absolute measurement.
 static int magnet_adc_count(void)
 {
-    return tmag_present ? 0 : MAGNET_SENSORS;
+    if (tmag_present)
+        return 0;
+#if defined(RG_GPIO_LCD_PWR) && RG_GPIO_LCD_PWR == GPIO_NUM_7
+    // GPIO7 drives the panel supply switch on this board revision. We only get here
+    // when the TMAG failed to answer, but claiming GPIO7 as an ADC input would fight
+    // that output and black the screen out -- a far worse failure than losing one
+    // Hall channel. The left DRV5055 on GPIO4 keeps magnet launch working.
+    return 1;
+#else
+    return MAGNET_SENSORS;
+#endif
 }
+
+// Defined further down with the rest of the zero handling, but needed here:
+// init is where the stored offset is loaded, and nothing may read a field value
+// before that has happened.
+static void zero_refresh(void);
 
 void magnet_launch_init(void)
 {
@@ -126,6 +162,7 @@ void magnet_launch_init(void)
         return;
 
     tmag_present = tmag5273_init();
+    zero_refresh();
 
     adc1_config_width(ADC_WIDTH_MAX - 1);
     // Only touch channels the board has. Claiming GPIO7 as an ADC input on the
@@ -201,11 +238,14 @@ static int magnet_field_threshold(void)
 typedef struct {
     int            raw[MAGNET_SENSORS];  // DRV5055 ADC counts, -1 when not fitted
     magnet_state_t adc[MAGNET_SENSORS];
-    tmag_vec_t     field;                // microtesla, only when field_valid
+    tmag_vec_t     field;                // microtesla, raw, only when field_valid
+    tmag_vec_t     net;                  // field minus the stored zero
     bool           field_valid;
     int            nearest;              // closest entry, threshold or not
-    float          match;                // its |cos| to this reading
-    float          runner_up;            // the next closest entry's |cos|
+    float          match;                // its signed cos to this reading
+    float          runner_up;            // the next closest entry's signed cos
+    int            flipped;              // entry this reading best matches reversed
+    float          flip_match;           // that entry's score, as a positive number
 } magnet_reading_t;
 
 // Stored direction of one learned cartridge, as the microtesla vector that was
@@ -216,10 +256,10 @@ static void fp_key(int slot, char *buf, size_t buflen)
     snprintf(buf, buflen, "Fp%d", slot);
 }
 
-static bool fp_load(int slot, tmag_vec_t *out)
+// One "x,y,z" setting, parsed. Shared by the per-slot directions and by the zero
+// measurement, which is stored in exactly the same shape.
+static bool vec_load(const char *key, tmag_vec_t *out)
 {
-    char key[MAGNET_KEY_LEN];
-    fp_key(slot, key, sizeof(key));
     char *text = rg_settings_get_string(MAGNET_NS, key, NULL);
     if (!text)
         return false;
@@ -254,7 +294,7 @@ static bool fp_load(int slot, tmag_vec_t *out)
     }
 
     if (!ok)
-        RG_LOGW("Magnet slot %d: cannot parse stored direction '%s'", slot, text);
+        RG_LOGW("Magnet: cannot parse %s = '%s'", key, text);
     free(text);
     if (!ok)
         return false;
@@ -262,37 +302,97 @@ static bool fp_load(int slot, tmag_vec_t *out)
     out->x = v[0];
     out->y = v[1];
     out->z = v[2];
+    return true;
+}
+
+static void vec_save(const char *key, const tmag_vec_t *v)
+{
+    char text[48];
+    snprintf(text, sizeof(text), "%.0f,%.0f,%.0f", v->x, v->y, v->z);
+    rg_settings_set_string(MAGNET_NS, key, text);
+}
+
+static bool fp_load(int slot, tmag_vec_t *out)
+{
+    char key[MAGNET_KEY_LEN];
+    fp_key(slot, key, sizeof(key));
+    if (!vec_load(key, out))
+        return false;
+    // An all-zero direction carries no information and would score 0 against
+    // everything, so it reads as "this slot is free" rather than as a match.
     return tmag5273_magnitude(out) > 0.0f;
 }
 
 static void fp_store(int slot, const tmag_vec_t *v)
 {
-    char key[MAGNET_KEY_LEN], text[48];
+    char key[MAGNET_KEY_LEN];
     fp_key(slot, key, sizeof(key));
-    snprintf(text, sizeof(text), "%.0f,%.0f,%.0f", v->x, v->y, v->z);
-    rg_settings_set_string(MAGNET_NS, key, text);
+    vec_save(key, v);
 }
 
-// |cos| between two field vectors. The absolute value is what makes a magnet
-// turned over read as the same cartridge: reversing the magnet negates the whole
-// vector, which flips the sign of the dot product and nothing else.
+// ----- Zero (ambient) measurement -----
+
+// Cached: the live diagnostics ask for it several times per frame, and it is
+// needed on the boot path before anything else happens. magnet_take_zero() is
+// the only writer, and it refreshes this.
+static tmag_vec_t zero_vec = {0.0f, 0.0f, 0.0f};
+static bool       zero_known = false;
+
+static void zero_refresh(void)
+{
+    zero_known = vec_load(MAGNET_KEY_ZERO, &zero_vec);
+    if (!zero_known)
+        zero_vec = (tmag_vec_t){0.0f, 0.0f, 0.0f};
+}
+
+// The cartridge's own contribution: what the sensor sees now, minus what it sees
+// with the slot empty. On a console that has never been zeroed this is the raw
+// vector, so such a unit behaves exactly as it did before rather than becoming
+// differently wrong -- but it is wrong, and the boot path says so in the log.
+static tmag_vec_t zero_subtract(const tmag_vec_t *v)
+{
+    return (tmag_vec_t){v->x - zero_vec.x, v->y - zero_vec.y, v->z - zero_vec.z};
+}
+
+// Defined with the rest of the menu code, but pairing needs it: an uncalibrated
+// console discovers the fact exactly when somebody tries to pair, and sending
+// them off to find a menu item is a worse answer than doing it there.
+static bool magnet_take_zero(void);
+
+// Signed cos between two field vectors: +1 the same direction, -1 exactly
+// opposite, 0 at right angles.
+//
+// The sign is kept deliberately. Turning a magnet over negates the whole vector,
+// so the reversed cartridge scores about -1 against the entry it was paired
+// from: as far away as the metric goes, and therefore free to be paired to a
+// different ROM. Taking fabsf() here -- which is what this used to do -- folds
+// those two states onto each other and throws away half the sphere.
 static float fp_similarity(const tmag_vec_t *a, const tmag_vec_t *b)
 {
     float na = tmag5273_magnitude(a);
     float nb = tmag5273_magnitude(b);
     if (na <= 0.0f || nb <= 0.0f)
         return 0.0f;
-    return fabsf((a->x * b->x + a->y * b->y + a->z * b->z) / (na * nb));
+    return (a->x * b->x + a->y * b->y + a->z * b->z) / (na * nb);
 }
 
 // Closest stored entry, whether or not it clears MAGNET_FP_MATCH -- the caller
 // applies that. `score` gets its similarity and `second` the runner-up's, and
 // the gap between those two is the real measure of how safe a match is: a 0.99
 // that beats a 0.98 is a coin flip, a 0.99 that beats a 0.86 is not.
-static int fp_nearest(const tmag_vec_t *v, float *score, float *second)
+//
+// `flip_slot` and `flip_score` report the same search run against the reversed
+// reading. Now that polarity distinguishes cartridges, "no match, but a strong
+// match if you turn it over" is the single most likely thing to go wrong at
+// assembly, and it is worth being able to say so instead of shrugging.
+static int fp_nearest(const tmag_vec_t *v, float *score, float *second,
+                      int *flip_slot, float *flip_score)
 {
-    int best_slot = 0;
-    float best = 0.0f, next = 0.0f;
+    int best_slot = 0, worst_slot = 0;
+    // Below any real cos, so the first entry examined always wins -- with signed
+    // scores, initialising to 0 would silently ignore every entry the reading
+    // points away from.
+    float best = -2.0f, next = -2.0f, worst = 2.0f;
 
     for (int slot = MAGNET_FP_FIRST; slot < MAGNET_SLOT_COUNT; ++slot)
     {
@@ -310,12 +410,26 @@ static int fp_nearest(const tmag_vec_t *v, float *score, float *second)
         {
             next = s;
         }
+        if (s < worst)
+        {
+            worst = s;
+            worst_slot = slot;
+        }
     }
+
+    if (!best_slot)
+        best = next = 0.0f;    // nothing stored at all
+    else if (next < -1.0f)
+        next = -1.0f;          // one entry only: nothing to be confused with
 
     if (score)
         *score = best;
     if (second)
         *second = next;
+    if (flip_slot)
+        *flip_slot = worst_slot;
+    if (flip_score)
+        *flip_score = worst_slot ? -worst : 0.0f;
     return best_slot;
 }
 
@@ -348,6 +462,13 @@ static int magnet_read(magnet_reading_t *out)
     int got = 0;
     for (int i = 0; i < MAGNET_FIELD_SAMPLES; ++i)
     {
+        // Paced, not back-to-back. One conversion at 32x averaging takes ~825us
+        // while a six-byte I2C read takes ~250us, so an unpaced burst re-reads
+        // the same conversion three times over and averages nothing at all --
+        // the sqrt(N) above only holds for samples that are actually distinct.
+        // FreeRTOS runs at 1kHz on this build, so 2ms really is 2ms.
+        if (i)
+            rg_task_delay(2);
         tmag_vec_t v;
         if (!tmag5273_read(&v))
             continue;
@@ -363,6 +484,7 @@ static int magnet_read(magnet_reading_t *out)
         out->field.x = sum.x / got;
         out->field.y = sum.y / got;
         out->field.z = sum.z / got;
+        out->net = zero_subtract(&out->field);
     }
 
     if (!out->field_valid)
@@ -371,11 +493,25 @@ static int magnet_read(magnet_reading_t *out)
     // Strength decides whether a cartridge is there at all; direction decides
     // which one. Below the threshold the direction is just noise pointing
     // somewhere, so there is nothing to match against.
-    if (tmag5273_magnitude(&out->field) < (float)magnet_field_threshold())
+    //
+    // Both tests run on the zero-corrected vector. The raw one is dominated by
+    // the console's own magnets: it clears any presence threshold with the slot
+    // empty, and it points in very nearly the same direction whether a cartridge
+    // is in there or not.
+    if (tmag5273_magnitude(&out->net) < (float)magnet_field_threshold())
         return 0;
 
-    out->nearest = fp_nearest(&out->field, &out->match, &out->runner_up);
-    return (out->match >= MAGNET_FP_MATCH) ? out->nearest : 0;
+    out->nearest = fp_nearest(&out->net, &out->match, &out->runner_up,
+                              &out->flipped, &out->flip_match);
+
+    // Two tests, not one. The score says the reading looks like this entry; the
+    // margin says it does not look equally like a different one. Without the
+    // second, a console starts the wrong game and nothing in the log explains it.
+    if (out->match < MAGNET_FP_MATCH)
+        return 0;
+    if (out->match - out->runner_up < MAGNET_FP_MARGIN)
+        return 0;
+    return out->nearest;
 }
 
 // The 16 samples of one average are taken back-to-back, so they average
@@ -414,9 +550,11 @@ static void slot_label(int slot, char *buf, size_t buflen)
                  state_name((magnet_state_t)(slot % 3)));
         return;
     }
-    // Learned entry: name it by the axis its stored direction leans on most.
-    // That is not what the match uses -- it compares the whole vector -- but it
-    // is the one number that tells two entries apart at a glance.
+    // Learned entry: name it by the axis its stored direction leans on most, and
+    // by that component's sign. Neither is what the match uses -- it compares the
+    // whole vector -- but together they tell two entries apart at a glance, and
+    // since a reversed magnet is now its own cartridge, the sign is half of what
+    // distinguishes a pair of them.
     tmag_vec_t ref;
     if (!fp_load(slot, &ref))
     {
@@ -445,6 +583,23 @@ static void slot_key(int slot, char *buf, size_t buflen)
 static void slot_app_key(int slot, char *buf, size_t buflen)
 {
     snprintf(buf, buflen, "Slot%dApp", slot);
+}
+
+// The game on a slot, named the way the owner picked it. Empty string when the
+// slot has nothing on it. Exists so the owner-facing dialogs can talk about
+// "Tetris" where the diagnostics talk about slot 10.
+static void slot_game_name(int slot, char *buf, size_t buflen)
+{
+    char key[MAGNET_KEY_LEN];
+    slot_key(slot, key, sizeof(key));
+    char *path = rg_settings_get_string(MAGNET_NS, key, NULL);
+    if (path && *path)
+        snprintf(buf, buflen, "%s", strcmp(path, MAGNET_SHOWCASE_TOKEN) == 0
+                                        ? "Showcase"
+                                        : rg_basename(path));
+    else
+        buf[0] = '\0';
+    free(path);
 }
 
 static retro_app_t *app_for_slot(int slot, const char *path)
@@ -477,9 +632,22 @@ void magnet_launch_check_and_boot(void)
     int slot = magnet_read_stable(&r);
 
     if (tmag_present)
-        RG_LOGI("Magnet: field=(%.0f,%.0f,%.0f)uT |B|=%.0f thr=%d match=%.3f slot=%d",
-                r.field.x, r.field.y, r.field.z, tmag5273_magnitude(&r.field),
-                magnet_field_threshold(), r.match, slot);
+    {
+        RG_LOGI("Magnet: raw=(%.0f,%.0f,%.0f) net=(%.0f,%.0f,%.0f) |net|=%.0f "
+                "thr=%d match=%.3f next=%.3f flip=%d/%.3f slot=%d",
+                r.field.x, r.field.y, r.field.z,
+                r.net.x, r.net.y, r.net.z, tmag5273_magnitude(&r.net),
+                magnet_field_threshold(), r.match, r.runner_up,
+                r.flipped, r.flip_match, slot);
+        if (!zero_known)
+            RG_LOGW("Magnet: this console has never been calibrated. Readings "
+                    "still carry the board's own field, so an empty slot can "
+                    "match a pairing. Magnet cartridges > Calibrate.");
+        if (slot == 0 && r.flip_match >= MAGNET_FP_MATCH)
+            RG_LOGW("Magnet: no match, but slot %d matches this reading reversed "
+                    "-- cartridge magnet is in the other way round",
+                    r.flipped);
+    }
     else
         RG_LOGI("Magnet: raw=(%d,%d) center=(%d,%d) band=(%d,%d) state=(%s,%s) slot=%d",
                 r.raw[0], r.raw[1], magnet_get_center(0), magnet_get_center(1),
@@ -658,7 +826,7 @@ static rg_gui_event_t show_readings_cb(rg_gui_option_t *option, rg_gui_event_t e
 
     char title[48], val_center[24], val_thr[16], val_match[32];
     char val_s[MAGNET_SENSORS][32], val_b[MAGNET_SENSORS][16];
-    char val_axis[3][28], val_field[24];
+    char val_axis[3][28], val_field[24], val_zero[24];
 
     // Which rows exist depends on what is fitted: with a TMAG5273 there is no
     // right-hand DRV5055 to show and the three field axes take its place. So the
@@ -676,6 +844,7 @@ static rg_gui_event_t show_readings_cb(rg_gui_option_t *option, rg_gui_event_t e
         for (int a = 0; a < 3; ++a)
             opts[rows++] = (rg_gui_option_t){0, axis_name[a], val_axis[a], RG_DIALOG_FLAG_MESSAGE, NULL};
         opts[rows++] = (rg_gui_option_t){0, "Strength", val_field, RG_DIALOG_FLAG_MESSAGE, NULL};
+        opts[rows++] = (rg_gui_option_t){0, "Zero", val_zero, RG_DIALOG_FLAG_MESSAGE, NULL};
         opts[rows++] = (rg_gui_option_t){0, "Match", val_match, RG_DIALOG_FLAG_MESSAGE, NULL};
     }
     for (int s = 0; s < sensors; ++s)
@@ -717,19 +886,31 @@ static rg_gui_event_t show_readings_cb(rg_gui_option_t *option, rg_gui_event_t e
 
         if (tmag_present)
         {
+            // The axes show the zero-corrected vector, because that is what the
+            // matcher sees. The raw total sits on the "Zero" row beside the
+            // stored offset, where the two can be compared at a glance -- if
+            // those are the same number, the slot is empty.
             if (r.field_valid)
             {
-                const float axis[3] = {r.field.x, r.field.y, r.field.z};
+                const float axis[3] = {r.net.x, r.net.y, r.net.z};
                 for (int a = 0; a < 3; ++a)
                     snprintf(val_axis[a], sizeof(val_axis[a]), "%+7.0f uT", axis[a]);
                 snprintf(val_field, sizeof(val_field), "%7.0f uT",
-                         tmag5273_magnitude(&r.field));
+                         tmag5273_magnitude(&r.net));
+                if (zero_known)
+                    snprintf(val_zero, sizeof(val_zero), "%.0f (raw %.0f)",
+                             tmag5273_magnitude(&zero_vec),
+                             tmag5273_magnitude(&r.field));
+                else
+                    snprintf(val_zero, sizeof(val_zero), "NOT SET (raw %.0f)",
+                             tmag5273_magnitude(&r.field));
             }
             else
             {
                 for (int a = 0; a < 3; ++a)
                     snprintf(val_axis[a], sizeof(val_axis[a]), "--");
                 snprintf(val_field, sizeof(val_field), "read failed");
+                snprintf(val_zero, sizeof(val_zero), "--");
             }
 
             // The score is what to watch while the raw numbers wobble: it is the
@@ -737,6 +918,15 @@ static rg_gui_event_t show_readings_cb(rg_gui_option_t *option, rg_gui_event_t e
             if (slot > 0)
                 snprintf(val_match, sizeof(val_match), "%d: %.3f  next %.2f",
                          slot, r.match, r.runner_up);
+            else if (r.match >= MAGNET_FP_MATCH)
+                // Cleared the score but not the margin: two entries look alike,
+                // which is a different problem from not recognising anything and
+                // wants a different fix (move a magnet, not adjust a threshold).
+                snprintf(val_match, sizeof(val_match), "%d? %.3f vs %.3f",
+                         r.nearest, r.match, r.runner_up);
+            else if (r.flip_match >= MAGNET_FP_MATCH)
+                snprintf(val_match, sizeof(val_match), "rev of %d (%.2f)",
+                         r.flipped, r.flip_match);
             else if (r.match > 0.0f)
                 snprintf(val_match, sizeof(val_match), "none %.3f (<%.2f)",
                          r.match, MAGNET_FP_MATCH);
@@ -914,6 +1104,28 @@ static rg_gui_event_t pair_current_cb(rg_gui_option_t *option, rg_gui_event_t ev
 
     magnet_launch_init();
 
+    // Pairing before the console has been calibrated stores the board's own
+    // field along with the cartridge's, and here that offset is several times
+    // the signal. Every pairing made that way has to be redone later, so it is
+    // refused -- but offered as something to fix now, since this is the moment
+    // the owner finds out and they already have the console in their hands.
+    if (tmag_present && !zero_known)
+    {
+        if (!rg_gui_confirm("Calibrate first",
+                            "This console has not been\ncalibrated yet, so it\n"
+                            "cannot tell a cartridge\nfrom its own magnets.\n\n"
+                            "Do that now?", true))
+            return RG_DIALOG_VOID;
+        if (!magnet_take_zero())
+            return RG_DIALOG_VOID;
+        // The cartridge came out for the measurement, so the reading taken below
+        // would be of an empty slot. Send them round once more rather than pair
+        // whatever is in there now.
+        rg_gui_alert("Ready",
+                     "Put the cartridge back in,\nthen choose\n\"Pair cartridge\" again.");
+        return RG_DIALOG_VOID;
+    }
+
     magnet_reading_t r;
     int slot = magnet_read(&r);
 
@@ -924,16 +1136,16 @@ static rg_gui_event_t pair_current_cb(rg_gui_option_t *option, rg_gui_event_t ev
     // slot from the sensors, so there slot 0 really does mean "nothing".)
     bool present = tmag_present
                        ? (r.field_valid &&
-                          tmag5273_magnitude(&r.field) >= (float)magnet_field_threshold())
+                          tmag5273_magnitude(&r.net) >= (float)magnet_field_threshold())
                        : (slot != 0);
 
     if (!present) {
         char msg[224];
         if (tmag_present)
             snprintf(msg, sizeof(msg),
-                     "Put a magnet in one of the\nfour positions in the\n"
-                     "cartridge, then insert it and\ntry again.\n\n(measured %.0f uT)",
-                     tmag5273_magnitude(&r.field));
+                     "No magnet found.\n\nCheck that the cartridge has\n"
+                     "a magnet in it and that it\nis pushed all the way in,\n"
+                     "then try again.");
         else
             snprintf(msg, sizeof(msg),
                      "Both sensors read idle:\n  L = %d (%+d)\n  R = %d (%+d)\n\n"
@@ -944,7 +1156,7 @@ static rg_gui_event_t pair_current_cb(rg_gui_option_t *option, rg_gui_event_t ev
         return RG_DIALOG_VOID;
     }
 
-    char prompt[320];
+    char prompt[320], game[64];
     if (tmag_present)
     {
         // An already-matching cartridge is re-pointed at a new ROM rather than
@@ -956,68 +1168,78 @@ static rg_gui_event_t pair_current_cb(rg_gui_option_t *option, rg_gui_event_t ev
             slot = fp_first_free();
             if (slot == 0)
             {
-                rg_gui_alert("No free slots", "All cartridge slots are in\nuse. Clear one first.");
+                rg_gui_alert("No room",
+                         "There is no room for\nanother cartridge.\n\n"
+                         "Remove one under\n\"My cartridges\" first.");
                 return RG_DIALOG_VOID;
             }
         }
-        // A new cartridge that already sits near an existing one is the failure
-        // worth catching here rather than three cartridges later: say so while
-        // the magnet can still be moved.
-        char note[80] = "";
-        if (reuse)
-            snprintf(note, sizeof(note), "  Match: %.3f\n", r.match);
-        else if (r.nearest > 0)
-            snprintf(note, sizeof(note), "  Nearest: slot %d at %.2f%s\n",
-                     r.nearest, r.match,
-                     r.match > 0.85f ? "  (close!)" : "");
-
         // A new cartridge sitting close to an existing one is the failure worth
         // catching while the magnet can still be moved -- afterwards the two are
         // simply unreliable and nothing in the UI explains why. So ask, plainly,
-        // rather than printing a number the owner has no way to interpret.
+        // rather than printing a number the owner has no way to interpret. Now
+        // that polarity counts, turning the magnet over is a second way out of
+        // it and worth offering alongside moving the magnet.
         if (!reuse && r.match > 0.85f && r.nearest > 0)
         {
-            char other[RG_PATH_MAX + 1] = "another cartridge";
-            char nkey[MAGNET_KEY_LEN];
-            slot_key(r.nearest, nkey, sizeof(nkey));
-            char *npath = rg_settings_get_string(MAGNET_NS, nkey, NULL);
-            if (npath && *npath)
-            {
-                snprintf(other, sizeof(other), "%s",
-                         strcmp(npath, MAGNET_SHOWCASE_TOKEN) == 0 ? "Showcase"
-                                                                   : rg_basename(npath));
-            }
-            free(npath);
-
+            slot_game_name(r.nearest, game, sizeof(game));
             char clash[256];
             snprintf(clash, sizeof(clash),
                      "This magnet position is\nalready used for:\n\n  %s\n\n"
-                     "Use one of the other positions.\nContinue anyway?",
-                     other);
+                     "Move the magnet somewhere\nelse, or turn it over.\n\n"
+                     "Continue anyway?",
+                     *game ? game : "another cartridge");
             if (!rg_gui_confirm("Position taken", clash, false))
                 return RG_DIALOG_VOID;
         }
 
-        snprintf(prompt, sizeof(prompt),
-                 "Cartridge %s:\n"
-                 "  Field: %+.0f %+.0f %+.0f\n"
-                 "  Strength: %.0f uT\n"
-                 "%s"
-                 "  Slot: %d%s\n\n"
-                 "Pick a ROM to assign?",
-                 reuse ? "recognised" : "is new",
-                 r.field.x, r.field.y, r.field.z,
-                 tmag5273_magnitude(&r.field), note, slot,
-                 reuse ? " (re-assign)" : "");
+        // No slot number and no field values on this screen. The owner needs one
+        // thing from it: is this cartridge new, or does it already have a game.
+        // Everything measurable lives under Advanced, where somebody diagnosing
+        // goes looking and an owner does not -- and the numbering there starts at
+        // 9, which would only ever raise a question this dialog cannot answer.
+        if (reuse)
+        {
+            slot_game_name(slot, game, sizeof(game));
+            if (*game)
+                snprintf(prompt, sizeof(prompt),
+                         "This cartridge already\nstarts:\n\n  %s\n\n"
+                         "Pick a different game?", game);
+            else
+                snprintf(prompt, sizeof(prompt),
+                         "This cartridge is known,\nbut has no game on it.\n\n"
+                         "Pick one?");
+        }
+        else if (r.flip_match >= MAGNET_FP_MATCH && r.flipped > 0)
+        {
+            // Turning a magnet over makes a second, separate cartridge, so this
+            // is not a clash. Naming the one it is the reverse of is what
+            // separates a deliberate choice from a mistake nobody notices.
+            slot_game_name(r.flipped, game, sizeof(game));
+            snprintf(prompt, sizeof(prompt),
+                     "This position is free. It is\n%s with the\n"
+                     "magnet the other way round.\n\nPick a game for it?",
+                     *game ? game : "another cartridge");
+        }
+        else
+            snprintf(prompt, sizeof(prompt),
+                     "This magnet position is\nfree.\n\nPick a game for it?");
     }
     else
-        snprintf(prompt, sizeof(prompt),
-                 "Cartridge detected:\n"
-                 "  Sensor L: %s\n"
-                 "  Sensor R: %s\n"
-                 "  Slot: %d\n\n"
-                 "Pick a ROM to assign?",
-                 state_name(r.adc[0]), state_name(r.adc[1]), slot);
+    {
+        // Same words as the TMAG board. The measurement behind them is a
+        // different one -- here the slot is computed from two N/S readings
+        // rather than learned -- but what the owner has to decide is identical,
+        // and the sensor states belong on the readings screen, not here.
+        slot_game_name(slot, game, sizeof(game));
+        if (*game)
+            snprintf(prompt, sizeof(prompt),
+                     "This cartridge already\nstarts:\n\n  %s\n\n"
+                     "Pick a different game?", game);
+        else
+            snprintf(prompt, sizeof(prompt),
+                     "This magnet position is\nfree.\n\nPick a game for it?");
+    }
     if (!rg_gui_confirm("Pair cartridge", prompt, true))
         return RG_DIALOG_VOID;
 
@@ -1027,7 +1249,7 @@ static rg_gui_event_t pair_current_cb(rg_gui_option_t *option, rg_gui_event_t ev
 
     // Stored after the ROM is picked, so a cancelled pick leaves no orphan entry.
     if (tmag_present)
-        fp_store(slot, &r.field);
+        fp_store(slot, &r.net);
 
     char key[MAGNET_KEY_LEN];
     slot_key(slot, key, sizeof(key));
@@ -1138,8 +1360,32 @@ static rg_gui_event_t clear_all_cb(rg_gui_option_t *option, rg_gui_event_t event
 {
     if (event != RG_DIALOG_ENTER)
         return RG_DIALOG_VOID;
-    if (!rg_gui_confirm("Clear all", "Remove all magnet -> ROM mappings?", false))
+
+    // Asking "are you sure" about nothing is worse than saying there is nothing
+    // to be sure about, and it is the answer somebody wants when they came here
+    // expecting a list.
+    int paired = 0;
+    for (int slot = 1; slot < MAGNET_SLOT_COUNT; ++slot) {
+        char name[64];
+        slot_game_name(slot, name, sizeof(name));
+        if (*name)
+            paired++;
+    }
+    if (!paired) {
+        rg_gui_alert("Forget all", "No cartridges are set up.");
         return RG_DIALOG_VOID;
+    }
+
+    char msg[192];
+    snprintf(msg, sizeof(msg),
+             "Forget %s cartridge%s?\n\nThe magnets stay in them,\n"
+             "but none of them will\nstart a game any more.",
+             paired == 1 ? "the" : "all", paired == 1 ? "" : "s");
+    if (!rg_gui_confirm("Forget all", msg, false))
+        return RG_DIALOG_VOID;
+    // The calibration survives. It describes the console, not the pairings, and
+    // having to redo it after clearing a set of mappings would be a trap rather
+    // than a safeguard.
     for (int slot = 1; slot < MAGNET_SLOT_COUNT; ++slot) {
         char key[MAGNET_KEY_LEN];
         slot_key(slot, key, sizeof(key));
@@ -1150,7 +1396,379 @@ static rg_gui_event_t clear_all_cb(rg_gui_option_t *option, rg_gui_event_t event
         rg_settings_delete(MAGNET_NS, key);
     }
     rg_settings_commit();
-    rg_gui_alert("Cleared", "All magnet mappings removed.");
+    rg_gui_alert("Done", "The cartridges no longer\nstart a game.\n\n"
+                         "Pair them again whenever\nyou like.");
+    return RG_DIALOG_VOID;
+}
+
+// ----- Zero measurement -----
+
+// Measures the field with the slot empty and stores it. Everything the matcher
+// does afterwards is relative to this vector, so it is the first thing to run on
+// a new board -- on this hardware it is the difference between a working system
+// and one that launches a game at an empty slot.
+//
+// A production step, not something an owner ever sees: the offset is a property
+// of where the speaker sits relative to the sensor, so it is measured once per
+// console and then holds. The owner's job stays "put a magnet in the cartridge
+// and pair it to a ROM".
+static bool magnet_take_zero(void)
+{
+    if (!tmag_present)
+        return false;
+
+    if (!rg_gui_confirm("Calibrate",
+                        "Take the cartridge out of\nthe slot and lay the\n"
+                        "console down flat.\n\nThis measures the console's\n"
+                        "own magnetism so it can\ntell a cartridge from it.\n\n"
+                        "Slot empty?", true))
+        return false;
+
+    magnet_launch_init();
+
+    tmag_vec_t sum = {0.0f, 0.0f, 0.0f};
+    int got = 0;
+    for (int i = 0; i < MAGNET_ZERO_SAMPLES; ++i)
+    {
+        tmag_vec_t v;
+        if (tmag5273_read(&v))
+        {
+            sum.x += v.x;
+            sum.y += v.y;
+            sum.z += v.z;
+            got++;
+        }
+        rg_task_delay(2);
+    }
+
+    // Half is a generous floor -- it takes a bus failing intermittently to get
+    // there -- but storing a zero built from three samples would be worse than
+    // storing none, because nothing downstream would ever flag it.
+    if (got < MAGNET_ZERO_SAMPLES / 2)
+    {
+        rg_gui_alert("Calibration failed",
+                     "The magnet sensor did not\nrespond. Try again, and if\n"
+                     "it keeps failing the console\nneeds service.");
+        return false;
+    }
+
+    tmag_vec_t z = {sum.x / got, sum.y / got, sum.z / got};
+
+    // Pairings made before any zero existed still have the offset baked in.
+    // Subtracting today's offset is exactly the correction they never got --
+    // accurate to the earth-field difference between the two poses, tens of uT
+    // against an error of hundreds. Far better than making the owner re-pair.
+    int rebased = 0;
+    if ((int)rg_settings_get_number(MAGNET_NS, MAGNET_KEY_VER, 1) < MAGNET_VER_ZEROED)
+    {
+        for (int slot = MAGNET_FP_FIRST; slot < MAGNET_SLOT_COUNT; ++slot)
+        {
+            tmag_vec_t ref;
+            if (!fp_load(slot, &ref))
+                continue;
+            ref.x -= z.x;
+            ref.y -= z.y;
+            ref.z -= z.z;
+            fp_store(slot, &ref);
+            rebased++;
+        }
+    }
+
+    vec_save(MAGNET_KEY_ZERO, &z);
+    rg_settings_set_number(MAGNET_NS, MAGNET_KEY_VER, MAGNET_VER_ZEROED);
+    rg_settings_commit();
+    zero_refresh();
+
+    // The owner gets a plain first line and one number they could repeat back
+    // over the phone; the vector itself stays out of it and lives on the
+    // readings screen, where somebody diagnosing will look anyway.
+    char msg[256];
+    int len = snprintf(msg, sizeof(msg),
+                       "Done.\n\nThe console's own field\nmeasures %.0f uT.\n",
+                       tmag5273_magnitude(&z));
+    if (rebased && len < (int)sizeof(msg))
+        snprintf(msg + len, sizeof(msg) - len,
+                 "\n%d cartridge%s already\npaired %s updated too.",
+                 rebased, rebased == 1 ? "" : "s", rebased == 1 ? "was" : "were");
+    rg_gui_alert("Calibrated", msg);
+    return true;
+}
+
+// One entry, either board. On the TMAG board calibrating means measuring the
+// console's own field; on the two-DRV5055 board it means finding each sensor's
+// idle point. Different measurements, same thing to the owner -- "the console
+// learns what empty looks like" -- so they do not get two menu items and a
+// choice they have no way to make.
+static rg_gui_event_t calibrate_cb(rg_gui_option_t *option, rg_gui_event_t event)
+{
+    if (event != RG_DIALOG_ENTER)
+        return RG_DIALOG_VOID;
+    if (tmag_present)
+        magnet_take_zero();
+    else
+        magnet_calibrate();
+    return RG_DIALOG_VOID;
+}
+
+// ----- Self test -----
+//
+// Two numbers decide whether magnet launch can be reliable at all, and neither
+// is visible on the readings screen because both are spreads over time:
+//
+//   pose  -- the console tilted while the cartridge stays put. This is the earth
+//            field (~50uT) turning in the sensor's frame, and it is irreducible:
+//            a fixed offset cannot cancel a rotating one. It sets how strong the
+//            cartridge magnet has to be.
+//   mech  -- the cartridge pulled out and pushed back in the same pose. This is
+//            play in the slot, and it sets how far apart two magnet positions
+//            have to sit.
+//
+// The screen separates them by itself. Presence is decided per sample, so
+// pulling the cartridge closes one insertion and pushing it in opens the next --
+// no mode to select, no button to press while both hands hold a cartridge.
+
+#define SELFTEST_MAX_INSERTS   16
+// Samples an insertion needs before it counts, so the vector sweeping past the
+// threshold on its way in does not register as an insertion of its own.
+#define SELFTEST_MIN_SAMPLES   4
+
+typedef struct {
+    tmag_vec_t sum;
+    int        n;
+    float      mag_min, mag_max;
+    float      ang_max; // widest angle any sample made with the running mean
+} st_acc_t;
+
+static void st_reset(st_acc_t *a)
+{
+    *a = (st_acc_t){{0.0f, 0.0f, 0.0f}, 0, 0.0f, 0.0f, 0.0f};
+}
+
+static tmag_vec_t st_mean(const st_acc_t *a)
+{
+    if (!a->n)
+        return (tmag_vec_t){0.0f, 0.0f, 0.0f};
+    return (tmag_vec_t){a->sum.x / a->n, a->sum.y / a->n, a->sum.z / a->n};
+}
+
+// Degrees between two vectors. Reported as an angle rather than as a cos because
+// the spreads below are small numbers there and unreadable ones here: 0.999 and
+// 0.995 are 2.6 and 5.7 degrees, and only one of those is a problem.
+static float st_angle(const tmag_vec_t *a, const tmag_vec_t *b)
+{
+    float c = fp_similarity(a, b);
+    if (c > 1.0f)
+        c = 1.0f;
+    if (c < -1.0f)
+        c = -1.0f;
+    return acosf(c) * 57.2957795f;
+}
+
+// Angle is taken against the mean so far rather than the final mean: a second
+// pass is not possible in a live loop, and the early bias only ever makes the
+// spread look slightly wider than it is, which is the safe direction to err.
+static void st_add(st_acc_t *a, const tmag_vec_t *v)
+{
+    float mag = tmag5273_magnitude(v);
+    if (a->n)
+    {
+        tmag_vec_t mean = st_mean(a);
+        float ang = st_angle(v, &mean);
+        if (ang > a->ang_max)
+            a->ang_max = ang;
+        if (mag < a->mag_min)
+            a->mag_min = mag;
+        if (mag > a->mag_max)
+            a->mag_max = mag;
+    }
+    else
+    {
+        a->mag_min = a->mag_max = mag;
+    }
+    a->sum.x += v->x;
+    a->sum.y += v->y;
+    a->sum.z += v->z;
+    a->n++;
+}
+
+static rg_gui_event_t self_test_cb(rg_gui_option_t *option, rg_gui_event_t event)
+{
+    if (event != RG_DIALOG_ENTER)
+        return RG_DIALOG_VOID;
+    if (!tmag_present)
+    {
+        rg_gui_alert("Self test", "Needs the TMAG5273.\nThis board has none.");
+        return RG_DIALOG_VOID;
+    }
+
+    magnet_launch_init();
+
+    // Static for the same reason the cartridge list is: a full set of insertion
+    // vectors plus the row buffers has no business on the launcher's stack.
+    static tmag_vec_t inserts[SELFTEST_MAX_INSERTS];
+    static char val_live[28], val_amb[28], val_in[28], val_pose[28],
+                val_mech[28], val_mag[28], val_match[30];
+    int inserts_n = 0;
+
+    st_acc_t cur, empty;
+    st_reset(&cur);
+    st_reset(&empty);
+    bool inserted = false;
+
+    rg_gui_option_t opts[] = {
+        {0, "Net",      val_live,  RG_DIALOG_FLAG_MESSAGE, NULL},
+        {0, "Ambient",  val_amb,   RG_DIALOG_FLAG_MESSAGE, NULL},
+        {0, "In slot",  val_in,    RG_DIALOG_FLAG_MESSAGE, NULL},
+        {0, "Pose",     val_pose,  RG_DIALOG_FLAG_MESSAGE, NULL},
+        {0, "Mech",     val_mech,  RG_DIALOG_FLAG_MESSAGE, NULL},
+        {0, "Strength", val_mag,   RG_DIALOG_FLAG_MESSAGE, NULL},
+        {0, "Match",    val_match, RG_DIALOG_FLAG_MESSAGE, NULL},
+        {0, "Reset",    NULL,      RG_DIALOG_FLAG_NORMAL,  NULL},
+        RG_DIALOG_END,
+    };
+    const int sel_reset = 7;
+
+    snprintf(val_live, sizeof(val_live), "--");
+    snprintf(val_amb, sizeof(val_amb), "--");
+    snprintf(val_in, sizeof(val_in), "out");
+    snprintf(val_pose, sizeof(val_pose), "--");
+    snprintf(val_mech, sizeof(val_mech), "--");
+    snprintf(val_mag, sizeof(val_mag), "--");
+    snprintf(val_match, sizeof(val_match), "--");
+
+    uint32_t prev = 0;
+    int64_t last_input_ts = 0;
+    rg_input_wait_for_key(RG_KEY_ALL, false, 1000);
+
+    while (true)
+    {
+        magnet_reading_t r;
+        int slot = magnet_read(&r);
+
+        if (r.field_valid)
+        {
+            float mag = tmag5273_magnitude(&r.net);
+            bool now_in = mag >= (float)magnet_field_threshold();
+
+            if (now_in)
+            {
+                if (!inserted)
+                    st_reset(&cur);
+                inserted = true;
+                st_add(&cur, &r.net);
+            }
+            else
+            {
+                // Closing an insertion is what advances the between-insertion
+                // figure, so a brief glitch above the threshold must not count
+                // as one -- hence the sample floor.
+                if (inserted && cur.n >= SELFTEST_MIN_SAMPLES &&
+                    inserts_n < SELFTEST_MAX_INSERTS)
+                    inserts[inserts_n++] = st_mean(&cur);
+                inserted = false;
+                // Raw, not net: with the slot empty this is what a zero
+                // measurement would store, so it can be held against the stored
+                // one directly.
+                st_add(&empty, &r.field);
+            }
+
+            snprintf(val_live, sizeof(val_live), "%+5.0f%+5.0f%+5.0f",
+                     r.net.x, r.net.y, r.net.z);
+
+            if (empty.n)
+            {
+                tmag_vec_t amb = st_mean(&empty);
+                tmag_vec_t drift = {amb.x - zero_vec.x, amb.y - zero_vec.y,
+                                    amb.z - zero_vec.z};
+                // Distance from the stored zero, not the angle between them:
+                // what matters is how many uT of error the stored value injects.
+                snprintf(val_amb, sizeof(val_amb), "%.0f  d%.0f  n%d",
+                         tmag5273_magnitude(&amb),
+                         zero_known ? tmag5273_magnitude(&drift) : 0.0f, empty.n);
+            }
+
+            if (inserted)
+                snprintf(val_in, sizeof(val_in), "#%d  %.0f uT  n%d",
+                         inserts_n + 1, mag, cur.n);
+            else
+                snprintf(val_in, sizeof(val_in), "out  %.0f uT", mag);
+
+            if (cur.n > 1)
+                snprintf(val_pose, sizeof(val_pose), "%.1f deg  %.0f..%.0f",
+                         cur.ang_max, cur.mag_min, cur.mag_max);
+
+            if (slot > 0)
+                snprintf(val_match, sizeof(val_match), "%d: %.3f next %.3f",
+                         slot, r.match, r.runner_up);
+            else if (r.flip_match >= MAGNET_FP_MATCH)
+                snprintf(val_match, sizeof(val_match), "rev of %d (%.2f)",
+                         r.flipped, r.flip_match);
+            else if (r.match != 0.0f)
+                snprintf(val_match, sizeof(val_match), "no: %.3f next %.3f",
+                         r.match, r.runner_up);
+            else
+                snprintf(val_match, sizeof(val_match), "-");
+        }
+
+        // Recomputed from the stored insertion means every frame rather than
+        // accumulated, so this spread is exact against the final mean instead of
+        // against whatever the mean happened to be at the time.
+        if (inserts_n > 0)
+        {
+            tmag_vec_t m = {0.0f, 0.0f, 0.0f};
+            for (int i = 0; i < inserts_n; ++i)
+            {
+                m.x += inserts[i].x;
+                m.y += inserts[i].y;
+                m.z += inserts[i].z;
+            }
+            m.x /= inserts_n;
+            m.y /= inserts_n;
+            m.z /= inserts_n;
+
+            float worst = 0.0f;
+            float lo = tmag5273_magnitude(&inserts[0]), hi = lo;
+            for (int i = 0; i < inserts_n; ++i)
+            {
+                float a = st_angle(&inserts[i], &m);
+                if (a > worst)
+                    worst = a;
+                float g = tmag5273_magnitude(&inserts[i]);
+                if (g < lo) lo = g;
+                if (g > hi) hi = g;
+            }
+            snprintf(val_mech, sizeof(val_mech), "%.1f deg  x%d", worst, inserts_n);
+            snprintf(val_mag, sizeof(val_mag), "%.0f..%.0f  %.0f%%", lo, hi,
+                     lo > 0.0f ? (hi - lo) * 100.0f / lo : 0.0f);
+        }
+
+        rg_gui_draw_status_bars();
+        rg_gui_draw_dialog("Self test", opts, sel_reset);
+
+        uint32_t now = rg_input_read_gamepad();
+        uint32_t old = (rg_system_timer() - last_input_ts > 300000) ? 0 : prev;
+        prev = now;
+
+        if (now != old)
+        {
+            if (now & (RG_KEY_B | RG_KEY_OPTION | RG_KEY_MENU))
+                break;
+            if (now & RG_KEY_A)
+            {
+                inserts_n = 0;
+                inserted = false;
+                st_reset(&cur);
+                st_reset(&empty);
+            }
+            last_input_ts = rg_system_timer();
+        }
+
+        rg_task_delay(40);
+        rg_system_tick(0);
+    }
+
+    rg_input_wait_for_key(RG_KEY_ALL, false, 1000);
+    rg_display_force_redraw();
     return RG_DIALOG_VOID;
 }
 
@@ -1164,8 +1782,8 @@ rg_gui_event_t magnet_launch_advanced_cb(rg_gui_option_t *option, rg_gui_event_t
         // Calibrate lives inside "Show readings", where you can watch the
         // sensors while you do it. No second entry for it here.
         {0, "Show readings", NULL, RG_DIALOG_FLAG_NORMAL, &show_readings_cb},
+        {0, "Self test",     NULL, RG_DIALOG_FLAG_NORMAL, &self_test_cb},
         {0, "Slot details",  NULL, RG_DIALOG_FLAG_NORMAL, &slot_details_cb},
-        {0, "Clear all",     NULL, RG_DIALOG_FLAG_NORMAL, &clear_all_cb},
         RG_DIALOG_END,
     };
     rg_gui_dialog("Advanced", opts, 0);
@@ -1179,10 +1797,15 @@ rg_gui_event_t magnet_launch_options_cb(rg_gui_option_t *option, rg_gui_event_t 
     if (event != RG_DIALOG_ENTER)
         return RG_DIALOG_VOID;
 
+    // Calibrate sits above Pair because that is the order they have to happen
+    // in, and a console that has never been calibrated cannot pair at all.
+    // Forget all goes last, below the list it empties.
     const rg_gui_option_t opts[] = {
         {0, "Auto-start",     "-",  RG_DIALOG_FLAG_NORMAL, &auto_launch_cb},
+        {0, "Calibrate",      NULL, RG_DIALOG_FLAG_NORMAL, &calibrate_cb},
         {0, "Pair cartridge", NULL, RG_DIALOG_FLAG_NORMAL, &pair_current_cb},
         {0, "My cartridges",  NULL, RG_DIALOG_FLAG_NORMAL, &my_cartridges_cb},
+        {0, "Forget all",     NULL, RG_DIALOG_FLAG_NORMAL, &clear_all_cb},
         RG_DIALOG_END,
     };
     rg_gui_dialog("Magnet cartridges", opts, 0);

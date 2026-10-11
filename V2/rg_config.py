@@ -47,3 +47,13 @@ PROJECT_SPARE_APPS = [
   ('app5', 0x1C0000),  # 1.75M
   ('app6', 0x1C0000),  # 1.75M
 ]
+
+# RSA-3072 key that every app image is signed with. It lives outside the repo on
+# purpose: it is the one thing in this project that cannot be regenerated, and a
+# key in a public tree is not a key. Losing it means never shipping another
+# update the devices in the field will accept.
+#
+# rg_tool.py checks EVERY app against it while packing the image and refuses to
+# build one that would not install, so this is not a step anybody has to
+# remember.
+SIGNING_KEY = os.getenv("BLOCKBOY_SIGNING_KEY", "")

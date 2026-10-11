@@ -235,10 +235,9 @@ extern "C" int render_offload_init(void)
   return g_snap != NULL;
 }
 
-/* ----- From here the render functions read/write via rc, a local render_ctx*
- * that each function fetches with 'render_ctx *const rc = RENDER_RC();'. The call
- * sites are untouched (the names are now macros). read_ioreg32 follows read_ioreg
- * automatically (use-time expansion). ----- */
+/* Render functions below access the current core's context through these macros.
+ * Hot pixel loops can cache a stable field pointer locally to avoid repeated
+ * core-ID reads. read_ioreg32 follows read_ioreg at macro expansion time. */
 #undef vram
 #define vram (*(R_CTX.vram))
 #undef read_ioreg
@@ -1823,6 +1822,9 @@ typedef enum
 // Bit 11 is set if the pixel belongs to a ST-object
 template <blendtype bldtype, bool st_objs>
 static void merge_blend(u32 start, u32 end, u16 *dst, u32 *src) {
+  // This task stays on one core and its palette binding is stable for the segment.
+  // Resolve it once: R_CTX otherwise reads PRID again for every palette access.
+  const u16 *const pal = palette_ram_converted;
   u32 bldalpha = read_ioreg(REG_BLDALPHA);
   u32 brightf = MIN(16, read_ioreg(REG_BLDY) & 0x1F);
   u32 blend_a = MIN(16, (bldalpha >> 0) & 0x1F);
@@ -1841,8 +1843,8 @@ static void merge_blend(u32 start, u32 end, u16 *dst, u32 *src) {
       bool do_blend    = (pixpair & 0x04000200) == 0x04000200;
       if ((st_objs && force_blend) || (do_blend && bldtype == BLEND_ONLY)) {
         // Top pixel is 1st target, pixel below is 2nd target. Blend!
-        u16 p1 = palette_ram_converted[(pixpair >>  0) & 0x1FF];
-        u16 p2 = palette_ram_converted[(pixpair >> 16) & 0x1FF];
+        u16 p1 = pal[(pixpair >>  0) & 0x1FF];
+        u16 p2 = pal[(pixpair >> 16) & 0x1FF];
         u32 p1e = (p1 | (p1 << 16)) & BLND_MSK;
         u32 p2e = (p2 | (p2 << 16)) & BLND_MSK;
         u32 pfe = (((p1e * blend_a) + (p2e * blend_b)) >> 4);
@@ -1862,7 +1864,7 @@ static void merge_blend(u32 start, u32 end, u16 *dst, u32 *src) {
       else if ((bldtype == BLEND_DARK || bldtype == BLEND_BRIGHT) &&
                (pixpair & 0x200) == 0x200) {
         // Top pixel is 1st-target, can still apply bright/dark effect.
-        u16 pidx = palette_ram_converted[pixpair & 0x1FF];
+        u16 pidx = pal[pixpair & 0x1FF];
         u32 epixel = (pidx | (pidx << 16)) & BLND_MSK;
         u32 pa = bldtype == BLEND_DARK ? 0 : ((BLND_MSK * brightf) >> 4) & BLND_MSK;
         u32 pb = ((epixel * (16 - brightf)) >> 4) & BLND_MSK;
@@ -1870,7 +1872,7 @@ static void merge_blend(u32 start, u32 end, u16 *dst, u32 *src) {
         dst[start++] = (epixel >> 16) | epixel;
       }
       else {
-        dst[start++] = palette_ram_converted[pixpair & 0x1FF];   // No effects
+        dst[start++] = pal[pixpair & 0x1FF];   // No effects
       }
     }
   } else {
@@ -1880,8 +1882,8 @@ static void merge_blend(u32 start, u32 end, u16 *dst, u32 *src) {
       bool force_blend = (pixpair & 0x04000800) == 0x04000800;
       if ((st_objs && force_blend) || (do_blend && bldtype == BLEND_ONLY)) {
         // Top pixel is 1st target, pixel below is 2nd target. Blend!
-        u16 p1 = palette_ram_converted[(pixpair >>  0) & 0x1FF];
-        u16 p2 = palette_ram_converted[(pixpair >> 16) & 0x1FF];
+        u16 p1 = pal[(pixpair >>  0) & 0x1FF];
+        u16 p2 = pal[(pixpair >> 16) & 0x1FF];
         u32 p1e = (p1 | (p1 << 16)) & BLND_MSK;
         u32 p2e = (p2 | (p2 << 16)) & BLND_MSK;
         u32 pfe = (((p1e * blend_a) + (p2e * blend_b)) >> 4) & BLND_MSK;
@@ -1890,7 +1892,7 @@ static void merge_blend(u32 start, u32 end, u16 *dst, u32 *src) {
       else if ((bldtype == BLEND_DARK || bldtype == BLEND_BRIGHT) &&
                (pixpair & 0x200) == 0x200) {
         // Top pixel is 1st-target, can still apply bright/dark effect.
-        u16 pidx = palette_ram_converted[pixpair & 0x1FF];
+        u16 pidx = pal[pixpair & 0x1FF];
         u32 epixel = (pidx | (pidx << 16)) & BLND_MSK;
         u32 pa = bldtype == BLEND_DARK ? 0 : ((BLND_MSK * brightf) >> 4) & BLND_MSK;
         u32 pb = ((epixel * (16 - brightf)) >> 4) & BLND_MSK;
@@ -1898,7 +1900,7 @@ static void merge_blend(u32 start, u32 end, u16 *dst, u32 *src) {
         dst[start++] = (epixel >> 16) | epixel;
       }
       else {
-        dst[start++] = palette_ram_converted[pixpair & 0x1FF];   // No effects
+        dst[start++] = pal[pixpair & 0x1FF];   // No effects
       }
     }
   }
@@ -1907,11 +1909,12 @@ static void merge_blend(u32 start, u32 end, u16 *dst, u32 *src) {
 // Applies brighten/darken effect to a bunch of color-indexed pixels.
 template <blendtype bldtype>
 static void merge_brightness(u32 start, u32 end, u16 *srcdst) {
+  const u16 *const pal = palette_ram_converted;
   u32 brightness = MIN(16, read_ioreg(REG_BLDY) & 0x1F);
 
   while (start < end) {
     u16 spix = srcdst[start];
-    u16 pixcol = palette_ram_converted[spix & 0x1FF];
+    u16 pixcol = pal[spix & 0x1FF];
 
     if ((spix & 0x200) == 0x200) {
       // Pixel is 1st target, can apply color effect.
@@ -2487,6 +2490,3 @@ extern "C" void render_offload_frame(u16 *out)
   }
 }
 #endif
-
-
-

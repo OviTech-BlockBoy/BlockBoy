@@ -4,3 +4,19 @@
 # controller works in the launcher and every other emulator, but not in GBA
 # games.
 CONFIG_BT_ENABLED=n
+
+# No in-app signature verification for the GBA emulator. Linking it costs 256
+# bytes of DRAM that are not there: the GBA buffers (VRAM 96K / IWRAM 32K /
+# memory map 32K) have to stay in internal SRAM for speed, and the link fails
+# with "region `dram0_0_seg' overflowed by 256 bytes".
+#
+# The image is STILL SIGNED. rg_tool.py signs it while packing and verifies
+# every app against the key, so the flasher accepts it like any other. What gbsp
+# gives up is checking signatures itself, which only applies when it hands
+# control back to the launcher: a local switch to a partition the flasher had
+# already verified before writing it.
+#
+# ESP-IDF derives SECURE_SIGNED_APPS from the two ON_* options, so turning
+# verification off here is what also turns the build-time signing off. That is
+# why the signing moved to the packing step for this app.
+CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT=n
